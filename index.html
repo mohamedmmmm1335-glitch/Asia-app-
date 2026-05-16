@@ -128,6 +128,9 @@
       currentCatId = null;
       sessionStorage.removeItem("currentCat");
 
+      // زر الرجوع - لو في الجريد مش محتاج يعمل حاجة
+      history.replaceState({ page: "home" }, "");
+
       const title = document.createElement("div");
       title.className = "page-title";
       title.innerHTML = `<h2>اختر قسمك</h2><p>اضغط على القسم لرؤية الأصناف</p>`;
@@ -142,10 +145,12 @@
         const card = document.createElement("div");
         card.className = "cat-card";
         const emoji = CAT_EMOJIS[cat.name] || "🍴";
+
+        // Lazy loading للصور
         card.innerHTML = `
           <div class="cat-img-wrap">
             ${cat.imageUrl
-              ? `<img src="${cat.imageUrl}" alt="${cat.name}" class="cat-img"/>`
+              ? `<img data-src="${cat.imageUrl}" alt="${cat.name}" class="cat-img lazy" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E"/>`
               : `<div class="cat-emoji">${emoji}</div>`}
           </div>
           <div class="cat-name">${cat.name}</div>
@@ -156,6 +161,7 @@
       });
 
       menuContainer.appendChild(grid);
+      initLazyLoad();
     }
 
     // =====================================================
@@ -164,6 +170,10 @@
     function renderItems(catId) {
       currentCatId = catId;
       sessionStorage.setItem("currentCat", catId);
+
+      // زر الرجوع من الموبايل
+      history.pushState({ page: "items", catId }, "");
+
       const cat = menuData[catId];
       menuContainer.innerHTML = "";
 
@@ -173,7 +183,9 @@
         <button class="back-btn" id="back-btn">← رجوع</button>
         <h2 class="section-title">${cat.name}</h2>`;
       menuContainer.appendChild(backBar);
-      document.getElementById("back-btn").addEventListener("click", renderCategoryGrid);
+      document.getElementById("back-btn").addEventListener("click", () => {
+        history.back();
+      });
 
       const availItems = cat.items.filter(i => i.available);
       if (!availItems.length) {
@@ -185,14 +197,22 @@
       grid.className = "items-grid";
       availItems.forEach(item => grid.appendChild(buildItemCard(item)));
       menuContainer.appendChild(grid);
+      initLazyLoad();
     }
+
+    // زر الرجوع من الموبايل
+    window.addEventListener("popstate", (e) => {
+      if (e.state?.page === "home" || !e.state) {
+        renderCategoryGrid();
+      }
+    });
 
     function buildItemCard(item) {
       const card = document.createElement("div");
       card.className = "item-card";
       card.innerHTML = `
         ${item.imageUrl
-          ? `<img src="${item.imageUrl}" alt="${item.name}" class="item-img" loading="lazy"/>`
+          ? `<img data-src="${item.imageUrl}" alt="${item.name}" class="item-img lazy" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E"/>`
           : `<div class="item-img-ph">🍴</div>`}
         <div class="item-info">
           <h3 class="item-name">${item.name}</h3>
@@ -209,6 +229,28 @@
         setTimeout(() => e.target.classList.remove("pop"), 300);
       });
       return card;
+    }
+
+    // =====================================================
+    // 🖼️ LAZY LOAD
+    // =====================================================
+    function initLazyLoad() {
+      const lazyImgs = document.querySelectorAll("img.lazy");
+      if (!lazyImgs.length) return;
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const img = entry.target;
+            img.src = img.dataset.src;
+            img.classList.remove("lazy");
+            img.classList.add("lazy-loaded");
+            observer.unobserve(img);
+          }
+        });
+      }, { rootMargin: "100px" });
+
+      lazyImgs.forEach(img => observer.observe(img));
     }
 
     // =====================================================
@@ -482,6 +524,10 @@
       display: inline-flex; align-items: center; gap: 6px;
     }
     .complaints-bar span { color: var(--text-muted); font-size: 12px; }
+    /* LAZY LOAD */
+    img.lazy { filter: blur(8px); transition: filter .4s; background: #232017; }
+    img.lazy-loaded { filter: blur(0); }
+
     .loading { display: flex; justify-content: center; gap: 10px; padding: 80px; }
     .loading span { width: 12px; height: 12px; border-radius: 50%; background: var(--gold); animation: pulse 1.2s infinite; }
     .loading span:nth-child(2) { animation-delay: .2s; }
