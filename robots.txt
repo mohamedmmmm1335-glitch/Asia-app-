@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://mohamedmmmm1335-glitch.github.io/Asia-app-/sitemap.xml
