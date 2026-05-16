@@ -105,7 +105,7 @@
       document.getElementById("add-cat-btn").addEventListener("click", async () => {
         const name = prompt("اسم القسم الجديد:");
         if (!name?.trim()) return;
-        await addDoc(collection(db, "categories"), { name: name.trim(), order: 99 });
+        await addDoc(collection(db, "categories"), { name: name.trim(), order: 99, imageUrl: "" });
         await loadCategories();
         showToast("✅ تم إضافة القسم");
       });
@@ -121,15 +121,13 @@
     async function loadCategories() {
       const snap = await getDocs(collection(db, "categories"));
       categories = {};
-      snap.forEach(d => { categories[d.id] = d.data().name; });
+      snap.forEach(d => { categories[d.id] = d.data().name || "بدون اسم"; });
 
-      // Populate category select in modal
       const sel = document.getElementById("item-cat");
       sel.innerHTML = Object.entries(categories).map(
         ([id, name]) => `<option value="${id}">${name}</option>`
       ).join("");
 
-      // Populate category filter tabs
       const tabs = document.getElementById("cat-filter");
       tabs.innerHTML = `<button class="ftab active" data-cat="all">الكل</button>` +
         Object.entries(categories).map(([id, n]) =>
@@ -143,7 +141,84 @@
           filterItems(btn.dataset.cat);
         });
       });
+
+      // Render categories grid
+      renderCatsGrid();
     }
+
+    async function renderCatsGrid() {
+      const snap = await getDocs(collection(db, "categories"));
+      const grid = document.getElementById("cats-grid");
+      if (!grid) return;
+      grid.innerHTML = "";
+      snap.forEach(d => {
+        const cat = { id: d.id, ...d.data() };
+        const card = document.createElement("div");
+        card.className = "admin-card";
+        card.innerHTML = `
+          ${cat.imageUrl ? `<img src="${cat.imageUrl}" alt="${cat.name}" class="ac-img"/>` : `<div class="ac-img-ph">🗂️</div>`}
+          <div class="ac-body">
+            <div class="ac-top">
+              <span class="ac-name">${cat.name || "بدون اسم"}</span>
+              <span class="ac-badge">ترتيب: ${cat.order || 0}</span>
+            </div>
+            <div class="ac-actions">
+              <button class="ac-btn edit cat-img-btn" data-id="${cat.id}">🖼️ تغيير صورة</button>
+              <button class="ac-btn edit cat-name-btn" data-id="${cat.id}" data-name="${cat.name}">✏️ تعديل اسم</button>
+              <button class="ac-btn del cat-del-btn" data-id="${cat.id}">🗑️ حذف</button>
+            </div>
+          </div>`;
+
+        card.querySelector(".cat-img-btn").addEventListener("click", () => openCatImgModal(cat.id, cat.name));
+        card.querySelector(".cat-name-btn").addEventListener("click", async () => {
+          const newName = prompt("الاسم الجديد:", cat.name);
+          if (!newName?.trim()) return;
+          await updateDoc(doc(db, "categories", cat.id), { name: newName.trim() });
+          await loadCategories();
+          showToast("✅ تم تعديل الاسم");
+        });
+        card.querySelector(".cat-del-btn").addEventListener("click", async () => {
+          if (!confirm(`حذف قسم "${cat.name}"؟`)) return;
+          await deleteDoc(doc(db, "categories", cat.id));
+          await loadCategories();
+          showToast("🗑️ تم الحذف");
+        });
+        grid.appendChild(card);
+      });
+    }
+
+    // Category image modal
+    let editingCatId = null;
+    function openCatImgModal(catId, catName) {
+      editingCatId = catId;
+      document.getElementById("cat-modal-title").textContent = `صورة قسم: ${catName}`;
+      document.getElementById("cat-img-modal").classList.add("open");
+    }
+    document.getElementById("cat-modal-close")?.addEventListener("click", () => {
+      document.getElementById("cat-img-modal").classList.remove("open");
+    });
+    document.getElementById("cat-img-upload")?.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file || !editingCatId) return;
+      const btn = document.getElementById("cat-upload-btn");
+      btn.disabled = true; btn.textContent = "جارٍ الرفع...";
+      try {
+        const formData = new FormData();
+        formData.append("image", file);
+        const res = await fetch(`${API_BASE_URL}/api/upload`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
+          body: formData
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error();
+        await updateDoc(doc(db, "categories", editingCatId), { imageUrl: data.url });
+        document.getElementById("cat-img-modal").classList.remove("open");
+        await loadCategories();
+        showToast("✅ تم رفع الصورة");
+      } catch { showToast("⚠️ فشل رفع الصورة", true); }
+      finally { btn.disabled = false; btn.textContent = "رفع الصورة"; }
+    });
 
     // =====================================================
     // 🍔 MENU ITEMS CRUD
@@ -178,7 +253,7 @@
               <span class="ac-name">${item.name}</span>
               <span class="ac-badge">${categories[item.categoryId] || "—"}</span>
             </div>
-            <div class="ac-price">${item.price} ر.س</div>
+            <div class="ac-price">${item.price} ج.م</div>
             <p class="ac-desc">${item.description || ""}</p>
             <div class="ac-actions">
               <button class="ac-btn edit" data-id="${item.id}">✏️ تعديل</button>
@@ -431,6 +506,7 @@
     .ftab.active { background: var(--gold); color: #000; font-weight: 700; border-color: var(--gold); }
 
     #items-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+    #cats-grid  { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
 
     .admin-card {
       background: var(--surface); border-radius: var(--radius); overflow: hidden;
@@ -467,6 +543,7 @@
       align-items: center; justify-content: center; background: rgba(0,0,0,0.6);
     }
     #item-modal.open { display: flex; }
+    #cat-img-modal.open { display: flex; }
     .modal-box {
       background: var(--surface); border-radius: var(--radius); padding: 28px;
       width: 90%; max-width: 460px; border: 1px solid rgba(240,180,41,0.2);
@@ -563,7 +640,8 @@
   </header>
 
   <nav class="nav-tabs">
-    <button class="nav-tab active" data-tab="menu-tab">📋 قائمة الطعام</button>
+    <button class="nav-tab active" data-tab="menu-tab">📋 الأصناف</button>
+    <button class="nav-tab" data-tab="cats-tab">🗂️ الأقسام</button>
     <button class="nav-tab" data-tab="orders-tab">
       🔔 الطلبات <span id="orders-badge"></span>
     </button>
@@ -573,10 +651,17 @@
   <div class="tab-content active" id="menu-tab">
     <div class="toolbar">
       <button class="primary-btn" id="add-item-btn">+ إضافة صنف</button>
-      <button class="secondary-btn" id="add-cat-btn">+ إضافة قسم</button>
     </div>
     <div id="cat-filter"></div>
     <div id="items-grid"></div>
+  </div>
+
+  <!-- CATEGORIES TAB -->
+  <div class="tab-content" id="cats-tab">
+    <div class="toolbar">
+      <button class="primary-btn" id="add-cat-btn">+ إضافة قسم</button>
+    </div>
+    <div id="cats-grid"></div>
   </div>
 
   <!-- ORDERS TAB -->
@@ -609,6 +694,19 @@
       </div>
       <button type="submit" id="save-item-btn">💾 حفظ</button>
     </form>
+  </div>
+</div>
+
+<!-- Category Image Modal -->
+<div id="cat-img-modal" style="position:fixed;inset:0;z-index:300;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <h3 id="cat-modal-title">تغيير صورة القسم</h3>
+      <button id="cat-modal-close">✕</button>
+    </div>
+    <label style="display:block;font-size:13px;color:#718096;margin-bottom:10px;">اختر صورة من جهازك</label>
+    <input type="file" id="cat-img-upload" accept="image/*" style="width:100%;padding:10px;background:#0d0d0f;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e2e8f0;"/>
+    <button id="cat-upload-btn" onclick="document.getElementById('cat-img-upload').click()" style="width:100%;margin-top:16px;padding:12px;background:#f0b429;color:#000;border:none;border-radius:8px;font-family:'Tajawal',sans-serif;font-size:16px;font-weight:700;cursor:pointer;">رفع الصورة</button>
   </div>
 </div>
 
