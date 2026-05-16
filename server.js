@@ -1,15 +1,28 @@
-const express    = require("express");
-const cors       = require("cors");
-const jwt        = require("jsonwebtoken");
+const express      = require("express");
+const cors         = require("cors");
+const jwt          = require("jsonwebtoken");
+const multer       = require("multer");
+const cloudinary   = require("cloudinary").v2;
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore }        = require("firebase-admin/firestore");
 
 // =====================================================
-// 🔧 CONFIG - غيّر القيم دي في Railway Environment Variables
+// 🔧 CONFIG
 // =====================================================
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 const JWT_SECRET     = process.env.JWT_SECRET     || "change_this_secret";
 const PORT           = process.env.PORT            || 3000;
+
+// =====================================================
+// ☁️ CLOUDINARY CONFIG
+// =====================================================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 // =====================================================
 // 🔥 FIREBASE ADMIN INIT
@@ -31,7 +44,7 @@ app.use(cors());
 app.use(express.json());
 
 // =====================================================
-// 🔐 MIDDLEWARE - التحقق من الـ JWT Token
+// 🔐 MIDDLEWARE
 // =====================================================
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
@@ -50,8 +63,6 @@ function authMiddleware(req, res, next) {
 // =====================================================
 // 🔑 AUTH ROUTES
 // =====================================================
-
-// POST /api/admin/verify - التحقق من كلمة السر
 app.post("/api/admin/verify", (req, res) => {
   const { password } = req.body;
   if (password !== ADMIN_PASSWORD) {
@@ -61,16 +72,37 @@ app.post("/api/admin/verify", (req, res) => {
   res.json({ success: true, token });
 });
 
-// GET /api/admin/me - التحقق من صلاحية التوكن
 app.get("/api/admin/me", authMiddleware, (req, res) => {
   res.json({ success: true, role: "admin" });
 });
 
 // =====================================================
-// 🍔 MENU ROUTES (محمية بالـ Auth)
+// 🖼️ IMAGE UPLOAD - Cloudinary (أدمن فقط)
 // =====================================================
+app.post("/api/upload", authMiddleware, upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "لم يتم رفع أي صورة" });
 
-// GET /api/menu - جلب كل الأصناف
+    const result = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "digital-menu", resource_type: "image" },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      stream.end(req.file.buffer);
+    });
+
+    res.json({ success: true, url: result.secure_url });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// =====================================================
+// 🍔 MENU ROUTES
+// =====================================================
 app.get("/api/menu", async (req, res) => {
   try {
     const snap  = await db.collection("menuItems").get();
@@ -81,7 +113,6 @@ app.get("/api/menu", async (req, res) => {
   }
 });
 
-// POST /api/menu - إضافة صنف جديد (أدمن فقط)
 app.post("/api/menu", authMiddleware, async (req, res) => {
   try {
     const { name, price, description, imageUrl, categoryId, available } = req.body;
@@ -90,7 +121,7 @@ app.post("/api/menu", authMiddleware, async (req, res) => {
     }
     const ref = await db.collection("menuItems").add({
       name,
-      price: parseFloat(price),
+      price:       parseFloat(price),
       description: description || "",
       imageUrl:    imageUrl    || "",
       categoryId,
@@ -103,7 +134,6 @@ app.post("/api/menu", authMiddleware, async (req, res) => {
   }
 });
 
-// PUT /api/menu/:id - تعديل صنف (أدمن فقط)
 app.put("/api/menu/:id", authMiddleware, async (req, res) => {
   try {
     const { name, price, description, imageUrl, categoryId, available } = req.body;
@@ -123,7 +153,6 @@ app.put("/api/menu/:id", authMiddleware, async (req, res) => {
   }
 });
 
-// DELETE /api/menu/:id - حذف صنف (أدمن فقط)
 app.delete("/api/menu/:id", authMiddleware, async (req, res) => {
   try {
     await db.collection("menuItems").doc(req.params.id).delete();
@@ -136,8 +165,6 @@ app.delete("/api/menu/:id", authMiddleware, async (req, res) => {
 // =====================================================
 // 📋 CATEGORIES ROUTES
 // =====================================================
-
-// GET /api/categories
 app.get("/api/categories", async (req, res) => {
   try {
     const snap = await db.collection("categories").orderBy("order").get();
@@ -148,7 +175,6 @@ app.get("/api/categories", async (req, res) => {
   }
 });
 
-// POST /api/categories (أدمن فقط)
 app.post("/api/categories", authMiddleware, async (req, res) => {
   try {
     const { name, order } = req.body;
@@ -163,8 +189,6 @@ app.post("/api/categories", authMiddleware, async (req, res) => {
 // =====================================================
 // 📦 ORDERS ROUTES
 // =====================================================
-
-// GET /api/orders (أدمن فقط)
 app.get("/api/orders", authMiddleware, async (req, res) => {
   try {
     const snap   = await db.collection("orders").orderBy("createdAt", "desc").get();
@@ -175,7 +199,6 @@ app.get("/api/orders", authMiddleware, async (req, res) => {
   }
 });
 
-// PATCH /api/orders/:id - تحديث حالة الطلب (أدمن فقط)
 app.patch("/api/orders/:id", authMiddleware, async (req, res) => {
   try {
     const { status } = req.body;
