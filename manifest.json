@@ -1,0 +1,27 @@
+{
+  "name": "مطعم آسيا - كريب و بروست",
+  "short_name": "مطعم آسيا",
+  "description": "قائمة مطعم آسيا للكريب والبروست",
+  "start_url": "/Asia-app-/index.html",
+  "scope": "/Asia-app-/",
+  "display": "standalone",
+  "background_color": "#0f0e0c",
+  "theme_color": "#c9a84c",
+  "orientation": "portrait",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/mohamedmmmm1335-glitch/Asia-app-/main/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/mohamedmmmm1335-glitch/Asia-app-/main/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
