@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>لوحة الإدارة - مطعمي</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getFirestore, collection, getDocs, addDoc, doc,
+      updateDoc, deleteDoc, onSnapshot, query, orderBy,
+      serverTimestamp, getDoc
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // =====================================================
+    // 🔧 CONFIG - نفس بيانات Firebase في index.html
+    // =====================================================
+    const firebaseConfig = {
+      apiKey: "AIzaSyDTi6c6PwgOc35n3q7ibIzKTbBji_U2OCw",
+      authDomain: "asia-7de4d.firebaseapp.com",
+      projectId: "asia-7de4d",
+      storageBucket: "asia-7de4d.firebasestorage.app",
+      messagingSenderId: "1043386153538",
+      appId: "1:1043386153538:web:0a0fb9660f32afbdb58bdb"
+    };
+    const API_BASE_URL = "https://your-app.railway.app";
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    // =====================================================
+    // 🔐 AUTH CHECK - تحقق من التوكن عند فتح الصفحة
+    // =====================================================
+    const token = localStorage.getItem("adminToken");
+    if (!token) {
+      showLoginPrompt();
+    } else {
+      verifyToken(token);
+    }
+
+    async function verifyToken(t) {
+      try {
+        const res  = await fetch(`${API_BASE_URL}/api/admin/me`, {
+          headers: { Authorization: `Bearer ${t}` }
+        });
+        if (!res.ok) throw new Error();
+        initDashboard();
+      } catch {
+        localStorage.removeItem("adminToken");
+        showLoginPrompt();
+      }
+    }
+
+    function showLoginPrompt() {
+      document.getElementById("loading-screen").style.display = "none";
+      document.getElementById("login-screen").style.display  = "flex";
+
+      document.getElementById("login-btn").addEventListener("click", async () => {
+        const pass = document.getElementById("admin-pass").value;
+        if (!pass) return;
+        try {
+          const res  = await fetch(`${API_BASE_URL}/api/admin/verify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: pass })
+          });
+          const data = await res.json();
+          if (data.success) {
+            localStorage.setItem("adminToken", data.token);
+            document.getElementById("login-screen").style.display = "none";
+            initDashboard();
+          } else {
+            showToast("❌ كلمة السر خاطئة", true);
+          }
+        } catch {
+          showToast("⚠️ خطأ في الاتصال", true);
+        }
+      });
+    }
+
+    // =====================================================
+    // 🚀 INIT DASHBOARD
+    // =====================================================
+    let categories = {};
+    let unsubOrders = null;
+
+    async function initDashboard() {
+      document.getElementById("loading-screen").style.display = "none";
+      document.getElementById("dashboard").style.display      = "block";
+
+      await loadCategories();
+      await loadMenuItems();
+      listenOrders();
+
+      document.getElementById("logout-btn").addEventListener("click", () => {
+        localStorage.removeItem("adminToken");
+        location.href = "index.html";
+      });
+
+      document.getElementById("add-item-btn").addEventListener("click", () => openItemModal());
+
+      document.getElementById("add-cat-btn").addEventListener("click", async () => {
+        const name = prompt("اسم القسم الجديد:");
+        if (!name?.trim()) return;
+        await addDoc(collection(db, "categories"), { name: name.trim(), order: 99 });
+        await loadCategories();
+        showToast("✅ تم إضافة القسم");
+      });
+
+      // Modal handlers
+      document.getElementById("modal-close").addEventListener("click", closeModal);
+      document.getElementById("item-form").addEventListener("submit", handleItemSave);
+    }
+
+    // =====================================================
+    // 📂 CATEGORIES
+    // =====================================================
+    async function loadCategories() {
+      const snap = await getDocs(collection(db, "categories"));
+      categories = {};
+      snap.forEach(d => { categories[d.id] = d.data().name; });
+
+      // Populate category select in modal
+      const sel = document.getElementById("item-cat");
+      sel.innerHTML = Object.entries(categories).map(
+        ([id, name]) => `<option value="${id}">${name}</option>`
+      ).join("");
+
+      // Populate category filter tabs
+      const tabs = document.getElementById("cat-filter");
+      tabs.innerHTML = `<button class="ftab active" data-cat="all">الكل</button>` +
+        Object.entries(categories).map(([id, n]) =>
+          `<button class="ftab" data-cat="${id}">${n}</button>`
+        ).join("");
+
+      tabs.querySelectorAll(".ftab").forEach(btn => {
+        btn.addEventListener("click", () => {
+          tabs.querySelectorAll(".ftab").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          filterItems(btn.dataset.cat);
+        });
+      });
+    }
+
+    // =====================================================
+    // 🍔 MENU ITEMS CRUD
+    // =====================================================
+    let allItems = [];
+
+    async function loadMenuItems() {
+      const snap = await getDocs(collection(db, "menuItems"));
+      allItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderItems(allItems);
+    }
+
+    function filterItems(catId) {
+      const filtered = catId === "all" ? allItems : allItems.filter(i => i.categoryId === catId);
+      renderItems(filtered);
+    }
+
+    function renderItems(items) {
+      const grid = document.getElementById("items-grid");
+      grid.innerHTML = "";
+      if (!items.length) {
+        grid.innerHTML = `<p class="empty-msg">لا توجد أصناف</p>`;
+        return;
+      }
+      items.forEach(item => {
+        const card = document.createElement("div");
+        card.className = "admin-card" + (item.available ? "" : " unavailable");
+        card.innerHTML = `
+          ${item.imageUrl ? `<img src="${item.imageUrl}" alt="${item.name}" class="ac-img"/>` : `<div class="ac-img-ph">🍽️</div>`}
+          <div class="ac-body">
+            <div class="ac-top">
+              <span class="ac-name">${item.name}</span>
+              <span class="ac-badge">${categories[item.categoryId] || "—"}</span>
+            </div>
+            <div class="ac-price">${item.price} ر.س</div>
+            <p class="ac-desc">${item.description || ""}</p>
+            <div class="ac-actions">
+              <button class="ac-btn edit" data-id="${item.id}">✏️ تعديل</button>
+              <button class="ac-btn toggle ${item.available ? 'off' : 'on'}" data-id="${item.id}" data-avail="${item.available}">
+                ${item.available ? "🙈 إخفاء" : "👁️ إظهار"}
+              </button>
+              <button class="ac-btn del" data-id="${item.id}">🗑️ حذف</button>
+            </div>
+          </div>`;
+
+        card.querySelector(".edit").addEventListener("click", () => openItemModal(item));
+        card.querySelector(".toggle").addEventListener("click", async (e) => {
+          const newVal = e.target.dataset.avail !== "true";
+          await updateDoc(doc(db, "menuItems", item.id), { available: newVal });
+          await loadMenuItems();
+          showToast(newVal ? "تم الإظهار" : "تم الإخفاء");
+        });
+        card.querySelector(".del").addEventListener("click", async () => {
+          if (!confirm(`حذف "${item.name}"؟`)) return;
+          await deleteDoc(doc(db, "menuItems", item.id));
+          await loadMenuItems();
+          showToast("🗑️ تم الحذف");
+        });
+        grid.appendChild(card);
+      });
+    }
+
+    // =====================================================
+    // 📝 ITEM MODAL
+    // =====================================================
+    let editingId = null;
+
+    function openItemModal(item = null) {
+      editingId = item?.id || null;
+      document.getElementById("modal-title").textContent = item ? "تعديل الصنف" : "إضافة صنف جديد";
+      document.getElementById("item-name").value = item?.name || "";
+      document.getElementById("item-price").value = item?.price || "";
+      document.getElementById("item-desc").value = item?.description || "";
+      document.getElementById("item-img").value = item?.imageUrl || "";
+      document.getElementById("item-avail").checked = item?.available !== false;
+      if (item?.categoryId) document.getElementById("item-cat").value = item.categoryId;
+      document.getElementById("item-modal").classList.add("open");
+    }
+
+    function closeModal() {
+      document.getElementById("item-modal").classList.remove("open");
+      editingId = null;
+    }
+
+    async function handleItemSave(e) {
+      e.preventDefault();
+      const headers = { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` };
+      const payload = {
+        name:        document.getElementById("item-name").value.trim(),
+        price:       parseFloat(document.getElementById("item-price").value),
+        description: document.getElementById("item-desc").value.trim(),
+        imageUrl:    document.getElementById("item-img").value.trim(),
+        categoryId:  document.getElementById("item-cat").value,
+        available:   document.getElementById("item-avail").checked
+      };
+
+      // 🔗 يمر عبر الـ Backend على Railway
+      const url    = editingId ? `${API_BASE_URL}/api/menu/${editingId}` : `${API_BASE_URL}/api/menu`;
+      const method = editingId ? "PUT" : "POST";
+
+      try {
+        const res = await fetch(url, { method, headers, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error();
+        showToast(editingId ? "✅ تم التعديل" : "✅ تم الإضافة");
+        closeModal();
+        await loadMenuItems();
+      } catch {
+        showToast("⚠️ فشلت العملية", true);
+      }
+    }
+
+    // =====================================================
+    // 📡 REAL-TIME ORDERS
+    // =====================================================
+    const STATUS_LABELS = { pending: "⏳ جديد", preparing: "👨‍🍳 يُحضَّر", done: "✅ جاهز" };
+
+    function listenOrders() {
+      const q = query(collection(db, "orders"), orderBy("createdAt", "desc"));
+      unsubOrders = onSnapshot(q, snap => {
+        const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderOrders(orders);
+        const newCount = orders.filter(o => o.status === "pending").length;
+        document.getElementById("orders-badge").textContent = newCount || "";
+        document.getElementById("orders-badge").style.display = newCount ? "grid" : "none";
+      });
+    }
+
+    function renderOrders(orders) {
+      const list = document.getElementById("orders-list");
+      list.innerHTML = "";
+      if (!orders.length) {
+        list.innerHTML = `<p class="empty-msg">لا توجد طلبات بعد</p>`;
+        return;
+      }
+      orders.forEach(order => {
+        const card = document.createElement("div");
+        card.className = `order-card status-${order.status}`;
+        const time = order.createdAt?.toDate?.().toLocaleTimeString("ar-SA") || "—";
+        card.innerHTML = `
+          <div class="order-header">
+            <span class="order-table">🪑 طاولة ${order.tableNumber}</span>
+            <span class="order-time">${time}</span>
+            <span class="order-status">${STATUS_LABELS[order.status] || order.status}</span>
+          </div>
+          <ul class="order-items">
+            ${order.items.map(i => `<li>${i.name} × ${i.qty} — <b>${(i.price*i.qty).toFixed(2)} ر.س</b></li>`).join("")}
+          </ul>
+          <div class="order-footer">
+            <span class="order-total">المجموع: ${order.total?.toFixed(2)} ر.س</span>
+            <div class="order-actions">
+              ${order.status !== "preparing" ? `<button class="ob prep" data-id="${order.id}">👨‍🍳 يُحضَّر</button>` : ""}
+              ${order.status !== "done"      ? `<button class="ob done" data-id="${order.id}">✅ جاهز</button>` : ""}
+              <button class="ob del-o" data-id="${order.id}">🗑️</button>
+            </div>
+          </div>`;
+
+        card.querySelector(".prep")?.addEventListener("click", () =>
+          updateDoc(doc(db, "orders", order.id), { status: "preparing" }));
+        card.querySelector(".done")?.addEventListener("click", () =>
+          updateDoc(doc(db, "orders", order.id), { status: "done" }));
+        card.querySelector(".del-o").addEventListener("click", () =>
+          deleteDoc(doc(db, "orders", order.id)));
+
+        list.appendChild(card);
+      });
+    }
+
+    // =====================================================
+    // TAB SWITCHING
+    // =====================================================
+    document.querySelectorAll(".nav-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".nav-tab").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+        btn.classList.add("active");
+        document.getElementById(btn.dataset.tab).classList.add("active");
+      });
+    });
+
+    // =====================================================
+    // TOAST
+    // =====================================================
+    function showToast(msg, isError = false) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.className = "toast show" + (isError ? " error" : "");
+      setTimeout(() => t.className = "toast", 2800);
+    }
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d0d0f; --surface: #16161a; --surface2: #1e1e24;
+      --gold: #f0b429; --green: #48bb78; --red: #fc8181;
+      --blue: #63b3ed; --text: #e2e8f0; --muted: #718096;
+      --radius: 12px; --font: 'Tajawal', sans-serif;
+    }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* SCREENS */
+    #loading-screen {
+      height: 100vh; display: grid; place-items: center;
+      font-size: 18px; color: var(--muted);
+    }
+    #login-screen {
+      height: 100vh; display: none; align-items: center; justify-content: center;
+      flex-direction: column; gap: 16px;
+    }
+    .login-box {
+      background: var(--surface); border-radius: var(--radius); padding: 40px;
+      border: 1px solid rgba(240,180,41,0.2); text-align: center; max-width: 360px; width: 90%;
+    }
+    .login-box h2 { color: var(--gold); margin-bottom: 24px; font-size: 22px; }
+    .login-box input {
+      width: 100%; padding: 12px 16px; border-radius: 8px;
+      background: var(--bg); border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text); font-family: var(--font); font-size: 15px; margin-bottom: 12px;
+    }
+    #login-btn {
+      width: 100%; padding: 12px; background: var(--gold); color: #000;
+      border: none; border-radius: 8px; font-family: var(--font); font-size: 16px;
+      font-weight: 700; cursor: pointer;
+    }
+
+    #dashboard { display: none; }
+
+    /* HEADER */
+    .admin-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 20px; background: var(--surface);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .admin-logo { font-size: 18px; font-weight: 900; color: var(--gold); }
+    #logout-btn {
+      background: none; border: 1px solid var(--red); color: var(--red);
+      padding: 6px 14px; border-radius: 6px; cursor: pointer;
+      font-family: var(--font); font-size: 13px; transition: background .2s;
+    }
+    #logout-btn:hover { background: rgba(252,129,129,0.1); }
+
+    /* NAV TABS */
+    .nav-tabs {
+      display: flex; background: var(--surface); border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .nav-tab {
+      flex: 1; padding: 14px; background: none; border: none; border-bottom: 2px solid transparent;
+      color: var(--muted); font-family: var(--font); font-size: 15px; font-weight: 700;
+      cursor: pointer; position: relative; transition: all .2s;
+    }
+    .nav-tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+    #orders-badge {
+      display: none; position: absolute; top: 8px; right: 20%;
+      background: var(--red); color: #fff; font-size: 11px; font-weight: 900;
+      width: 18px; height: 18px; border-radius: 9px; place-items: center;
+    }
+
+    /* CONTENT */
+    .tab-content { display: none; padding: 20px; }
+    .tab-content.active { display: block; }
+
+    /* MENU MANAGEMENT */
+    .toolbar {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 20px;
+    }
+    .primary-btn {
+      background: var(--gold); color: #000; border: none; padding: 10px 20px;
+      border-radius: 8px; font-family: var(--font); font-size: 14px; font-weight: 700;
+      cursor: pointer; transition: opacity .2s;
+    }
+    .primary-btn:hover { opacity: .85; }
+    .secondary-btn {
+      background: var(--surface2); color: var(--text); border: 1px solid rgba(255,255,255,0.1);
+      padding: 10px 20px; border-radius: 8px; font-family: var(--font); font-size: 14px;
+      cursor: pointer;
+    }
+
+    #cat-filter { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+    .ftab {
+      padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.15);
+      background: none; color: var(--muted); font-family: var(--font); font-size: 13px; cursor: pointer;
+    }
+    .ftab.active { background: var(--gold); color: #000; font-weight: 700; border-color: var(--gold); }
+
+    #items-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+
+    .admin-card {
+      background: var(--surface); border-radius: var(--radius); overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.07); transition: transform .2s;
+    }
+    .admin-card:hover { transform: translateY(-2px); }
+    .admin-card.unavailable { opacity: .5; }
+
+    .ac-img { width: 100%; height: 150px; object-fit: cover; }
+    .ac-img-ph { height: 80px; display: grid; place-items: center; font-size: 36px; background: var(--surface2); }
+    .ac-body { padding: 14px; }
+    .ac-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+    .ac-name { font-size: 16px; font-weight: 700; }
+    .ac-badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      background: rgba(240,180,41,0.15); color: var(--gold); border: 1px solid rgba(240,180,41,0.3);
+    }
+    .ac-price { font-size: 18px; font-weight: 900; color: var(--gold); margin: 4px 0 6px; }
+    .ac-desc { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+    .ac-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ac-btn {
+      flex: 1; min-width: 70px; padding: 7px 10px; border-radius: 6px; border: none;
+      font-family: var(--font); font-size: 12px; cursor: pointer; font-weight: 700; transition: opacity .2s;
+    }
+    .ac-btn.edit { background: rgba(99,179,237,0.15); color: var(--blue); }
+    .ac-btn.toggle.off { background: rgba(113,128,150,0.15); color: var(--muted); }
+    .ac-btn.toggle.on  { background: rgba(72,187,120,0.15); color: var(--green); }
+    .ac-btn.del  { background: rgba(252,129,129,0.15); color: var(--red); }
+    .ac-btn:hover { opacity: .75; }
+
+    /* MODAL */
+    #item-modal {
+      position: fixed; inset: 0; z-index: 300; display: none;
+      align-items: center; justify-content: center; background: rgba(0,0,0,0.6);
+    }
+    #item-modal.open { display: flex; }
+    .modal-box {
+      background: var(--surface); border-radius: var(--radius); padding: 28px;
+      width: 90%; max-width: 460px; border: 1px solid rgba(240,180,41,0.2);
+      max-height: 90vh; overflow-y: auto;
+    }
+    .modal-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .modal-hdr h3 { font-size: 18px; color: var(--gold); }
+    #modal-close { background: none; border: none; color: var(--muted); font-size: 22px; cursor: pointer; }
+
+    #item-form label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; margin-top: 14px; }
+    #item-form input[type="text"],
+    #item-form input[type="number"],
+    #item-form textarea,
+    #item-form select {
+      width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);
+      background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px;
+    }
+    #item-form textarea { resize: vertical; min-height: 70px; }
+    .avail-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+    .avail-row input { width: auto; }
+    #save-item-btn {
+      width: 100%; margin-top: 20px; padding: 12px; background: var(--gold); color: #000;
+      border: none; border-radius: 8px; font-family: var(--font); font-size: 16px;
+      font-weight: 700; cursor: pointer;
+    }
+
+    /* ORDERS */
+    #orders-list { display: flex; flex-direction: column; gap: 14px; }
+    .order-card {
+      background: var(--surface); border-radius: var(--radius); padding: 16px;
+      border-right: 4px solid var(--muted);
+    }
+    .order-card.status-pending  { border-color: var(--gold); }
+    .order-card.status-preparing { border-color: var(--blue); }
+    .order-card.status-done     { border-color: var(--green); }
+
+    .order-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+    .order-table { font-weight: 700; font-size: 15px; }
+    .order-time  { font-size: 12px; color: var(--muted); margin-right: auto; }
+    .order-status {
+      font-size: 12px; padding: 4px 10px; border-radius: 12px;
+      background: var(--surface2); font-weight: 700;
+    }
+    .order-items { padding-right: 16px; margin-bottom: 12px; }
+    .order-items li { font-size: 14px; padding: 3px 0; color: var(--muted); }
+    .order-items li b { color: var(--text); }
+    .order-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .order-total { font-size: 16px; font-weight: 900; color: var(--gold); }
+    .order-actions { display: flex; gap: 8px; }
+    .ob {
+      padding: 7px 14px; border-radius: 6px; border: none;
+      font-family: var(--font); font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity .2s;
+    }
+    .ob:hover { opacity: .75; }
+    .ob.prep  { background: rgba(99,179,237,0.15); color: var(--blue); }
+    .ob.done  { background: rgba(72,187,120,0.15); color: var(--green); }
+    .ob.del-o { background: rgba(252,129,129,0.15); color: var(--red); }
+
+    .empty-msg { color: var(--muted); text-align: center; padding: 40px; }
+
+    /* TOAST */
+    .toast {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(20px);
+      background: var(--surface2); color: var(--text); padding: 12px 24px; border-radius: 30px;
+      font-size: 14px; font-weight: 700; opacity: 0; transition: all .3s; z-index: 999;
+      border: 1px solid rgba(240,180,41,0.3); white-space: nowrap; pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { border-color: var(--red); color: var(--red); }
+  </style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading-screen">⏳ جارٍ التحقق...</div>
+
+<!-- Login -->
+<div id="login-screen">
+  <div class="login-box">
+    <h2>🔐 لوحة الإدارة</h2>
+    <input type="password" id="admin-pass" placeholder="كلمة السر" />
+    <button id="login-btn">دخول</button>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div id="dashboard">
+  <header class="admin-header">
+    <div class="admin-logo">🍽️ لوحة الإدارة - مطعمي</div>
+    <button id="logout-btn">تسجيل الخروج</button>
+  </header>
+
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-tab="menu-tab">📋 قائمة الطعام</button>
+    <button class="nav-tab" data-tab="orders-tab">
+      🔔 الطلبات <span id="orders-badge"></span>
+    </button>
+  </nav>
+
+  <!-- MENU TAB -->
+  <div class="tab-content active" id="menu-tab">
+    <div class="toolbar">
+      <button class="primary-btn" id="add-item-btn">+ إضافة صنف</button>
+      <button class="secondary-btn" id="add-cat-btn">+ إضافة قسم</button>
+    </div>
+    <div id="cat-filter"></div>
+    <div id="items-grid"></div>
+  </div>
+
+  <!-- ORDERS TAB -->
+  <div class="tab-content" id="orders-tab">
+    <div id="orders-list"></div>
+  </div>
+</div>
+
+<!-- Item Modal -->
+<div id="item-modal">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <h3 id="modal-title">إضافة صنف</h3>
+      <button id="modal-close">✕</button>
+    </div>
+    <form id="item-form">
+      <label>اسم الصنف *</label>
+      <input type="text" id="item-name" required />
+      <label>السعر (ر.س) *</label>
+      <input type="number" id="item-price" min="0" step="0.01" required />
+      <label>القسم *</label>
+      <select id="item-cat"></select>
+      <label>الوصف</label>
+      <textarea id="item-desc"></textarea>
+      <label>رابط الصورة</label>
+      <input type="text" id="item-img" placeholder="https://..." />
+      <div class="avail-row">
+        <input type="checkbox" id="item-avail" checked/>
+        <label for="item-avail" style="margin:0">متاح للطلب</label>
+      </div>
+      <button type="submit" id="save-item-btn">💾 حفظ</button>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+</body>
+</html>
