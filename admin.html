@@ -196,11 +196,11 @@
       document.getElementById("cat-upload-btn").style.display = "none";
       document.getElementById("cat-uploading").style.display = "none";
       document.getElementById("cat-img-upload").value = "";
-      document.getElementById("cat-img-modal").classList.add("open");
+      document.getElementById("cat-img-modal").style.display = "flex";
     }
 
     document.getElementById("cat-modal-close").addEventListener("click", () => {
-      document.getElementById("cat-img-modal").classList.remove("open");
+      document.getElementById("cat-img-modal").style.display = "none";
     });
 
     // اختيار الصورة
@@ -238,7 +238,7 @@
         const data = await res.json();
         if (!data.success) throw new Error();
         await updateDoc(doc(db, "categories", editingCatId), { imageUrl: data.url });
-        document.getElementById("cat-img-modal").classList.remove("open");
+        document.getElementById("cat-img-modal").style.display = "none";
         await loadCategories();
         showToast("✅ تم رفع الصورة");
       } catch { showToast("⚠️ فشل رفع الصورة", true); }
