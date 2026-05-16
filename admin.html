@@ -187,21 +187,46 @@
       });
     }
 
-    // Category image modal
+    // Category image modal handlers
     let editingCatId = null;
     function openCatImgModal(catId, catName) {
       editingCatId = catId;
       document.getElementById("cat-modal-title").textContent = `صورة قسم: ${catName}`;
+      document.getElementById("cat-img-preview").style.display = "none";
+      document.getElementById("cat-upload-btn").style.display = "none";
+      document.getElementById("cat-uploading").style.display = "none";
+      document.getElementById("cat-img-upload").value = "";
       document.getElementById("cat-img-modal").classList.add("open");
     }
-    document.getElementById("cat-modal-close")?.addEventListener("click", () => {
+
+    document.getElementById("cat-modal-close").addEventListener("click", () => {
       document.getElementById("cat-img-modal").classList.remove("open");
     });
-    document.getElementById("cat-img-upload")?.addEventListener("change", async (e) => {
+
+    // اختيار الصورة
+    document.getElementById("cat-pick-btn").addEventListener("click", () => {
+      document.getElementById("cat-img-upload").click();
+    });
+
+    document.getElementById("cat-img-upload").addEventListener("change", (e) => {
       const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const preview = document.getElementById("cat-img-preview");
+        preview.src = ev.target.result;
+        preview.style.display = "block";
+        document.getElementById("cat-upload-btn").style.display = "block";
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // رفع الصورة على Cloudinary
+    document.getElementById("cat-upload-btn").addEventListener("click", async () => {
+      const file = document.getElementById("cat-img-upload").files[0];
       if (!file || !editingCatId) return;
-      const btn = document.getElementById("cat-upload-btn");
-      btn.disabled = true; btn.textContent = "جارٍ الرفع...";
+      document.getElementById("cat-upload-btn").style.display = "none";
+      document.getElementById("cat-uploading").style.display = "block";
       try {
         const formData = new FormData();
         formData.append("image", file);
@@ -217,7 +242,47 @@
         await loadCategories();
         showToast("✅ تم رفع الصورة");
       } catch { showToast("⚠️ فشل رفع الصورة", true); }
-      finally { btn.disabled = false; btn.textContent = "رفع الصورة"; }
+      finally { document.getElementById("cat-uploading").style.display = "none"; }
+    });
+
+    // Item image pick handler
+    document.getElementById("item-img-pick-btn").addEventListener("click", () => {
+      document.getElementById("item-img-file").click();
+    });
+
+    document.getElementById("item-img-file").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      // عرض preview
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const preview = document.getElementById("item-img-preview");
+        preview.src = ev.target.result;
+        preview.style.display = "block";
+      };
+      reader.readAsDataURL(file);
+
+      // رفع على Cloudinary فوراً
+      document.getElementById("item-img-pick-btn").style.display = "none";
+      document.getElementById("item-img-uploading").style.display = "block";
+      try {
+        const formData = new FormData();
+        formData.append("image", file);
+        const res = await fetch(`${API_BASE_URL}/api/upload`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
+          body: formData
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error();
+        document.getElementById("item-img").value = data.url;
+        showToast("✅ تم رفع الصورة");
+      } catch { showToast("⚠️ فشل رفع الصورة", true); document.getElementById("item-img").value = ""; }
+      finally {
+        document.getElementById("item-img-uploading").style.display = "none";
+        document.getElementById("item-img-pick-btn").style.display = "block";
+      }
     });
 
     // =====================================================
@@ -295,6 +360,17 @@
       document.getElementById("item-img").value = item?.imageUrl || "";
       document.getElementById("item-avail").checked = item?.available !== false;
       if (item?.categoryId) document.getElementById("item-cat").value = item.categoryId;
+
+      // عرض الصورة الحالية لو موجودة
+      const preview = document.getElementById("item-img-preview");
+      if (item?.imageUrl) {
+        preview.src = item.imageUrl;
+        preview.style.display = "block";
+      } else {
+        preview.src = "";
+        preview.style.display = "none";
+      }
+      document.getElementById("item-img-file").value = "";
       document.getElementById("item-modal").classList.add("open");
     }
 
@@ -562,7 +638,14 @@
       background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px;
     }
     #item-form textarea { resize: vertical; min-height: 70px; }
-    .avail-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+    .upload-box { background: var(--surface2); border-radius: 8px; padding: 12px; border: 1px dashed rgba(240,180,41,0.3); margin-top: 4px; }
+    .upload-pick-btn {
+      width: 100%; padding: 12px; background: var(--surface2);
+      border: 1px solid rgba(240,180,41,0.4); color: var(--gold);
+      border-radius: 8px; font-family: var(--font); font-size: 14px;
+      font-weight: 700; cursor: pointer; transition: background .2s;
+    }
+    .upload-pick-btn:hover { background: rgba(240,180,41,0.1); }
     .avail-row input { width: auto; }
     #save-item-btn {
       width: 100%; margin-top: 20px; padding: 12px; background: var(--gold); color: #000;
@@ -680,14 +763,20 @@
     <form id="item-form">
       <label>اسم الصنف *</label>
       <input type="text" id="item-name" required />
-      <label>السعر (ر.س) *</label>
+      <label>السعر (ج.م) *</label>
       <input type="number" id="item-price" min="0" step="0.01" required />
       <label>القسم *</label>
       <select id="item-cat"></select>
       <label>الوصف</label>
       <textarea id="item-desc"></textarea>
-      <label>رابط الصورة</label>
-      <input type="text" id="item-img" placeholder="https://..." />
+      <label>صورة الصنف</label>
+      <div class="upload-box" id="item-img-preview-wrap">
+        <img id="item-img-preview" src="" style="display:none;width:100%;height:140px;object-fit:cover;border-radius:8px;margin-bottom:8px;"/>
+        <input type="file" id="item-img-file" accept="image/*" style="display:none"/>
+        <input type="hidden" id="item-img"/>
+        <button type="button" id="item-img-pick-btn" class="upload-pick-btn">📷 اختر صورة من المعرض</button>
+        <div id="item-img-uploading" style="display:none;text-align:center;color:#f0b429;padding:8px;">⏳ جارٍ الرفع...</div>
+      </div>
       <div class="avail-row">
         <input type="checkbox" id="item-avail" checked/>
         <label for="item-avail" style="margin:0">متاح للطلب</label>
@@ -704,9 +793,11 @@
       <h3 id="cat-modal-title">تغيير صورة القسم</h3>
       <button id="cat-modal-close">✕</button>
     </div>
-    <label style="display:block;font-size:13px;color:#718096;margin-bottom:10px;">اختر صورة من جهازك</label>
-    <input type="file" id="cat-img-upload" accept="image/*" style="width:100%;padding:10px;background:#0d0d0f;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e2e8f0;"/>
-    <button id="cat-upload-btn" onclick="document.getElementById('cat-img-upload').click()" style="width:100%;margin-top:16px;padding:12px;background:#f0b429;color:#000;border:none;border-radius:8px;font-family:'Tajawal',sans-serif;font-size:16px;font-weight:700;cursor:pointer;">رفع الصورة</button>
+    <img id="cat-img-preview" src="" style="display:none;width:100%;height:150px;object-fit:cover;border-radius:8px;margin-bottom:12px;"/>
+    <input type="file" id="cat-img-upload" accept="image/*" style="display:none"/>
+    <button id="cat-pick-btn" class="upload-pick-btn" style="width:100%;margin-bottom:12px;">📷 اختر صورة من المعرض</button>
+    <div id="cat-uploading" style="display:none;text-align:center;color:#f0b429;padding:8px;">⏳ جارٍ الرفع على Cloudinary...</div>
+    <button id="cat-upload-btn" style="width:100%;padding:12px;background:#f0b429;color:#000;border:none;border-radius:8px;font-family:'Tajawal',sans-serif;font-size:16px;font-weight:700;cursor:pointer;display:none;">✅ رفع الصورة</button>
   </div>
 </div>
 
