@@ -445,7 +445,7 @@
     // =====================================================
     // 📡 REAL-TIME ORDERS
     // =====================================================
-    const STATUS_LABELS = { pending: "⏳ جديد", preparing: "👨‍🍳 يُحضَّر", done: "✅ جاهز" };
+    const STATUS_LABELS = { pending: "⏳ جديد", preparing: "👨‍🍳 يُحضَّر", done: "✅ جاهز", received: "🎉 تم الاستلام" };
 
     function listenOrders() {
       const q = query(collection(db, "orders"), orderBy("createdAt", "desc"));
@@ -483,6 +483,7 @@
             <div class="order-actions">
               ${order.status !== "preparing" ? `<button class="ob prep" data-id="${order.id}">👨‍🍳 يُحضَّر</button>` : ""}
               ${order.status !== "done"      ? `<button class="ob done" data-id="${order.id}">✅ جاهز</button>` : ""}
+              ${order.status === "done"      ? `<button class="ob recv" data-id="${order.id}">🎉 تم الاستلام</button>` : ""}
               <button class="ob del-o" data-id="${order.id}">🗑️</button>
             </div>
           </div>`;
@@ -509,6 +510,17 @@
             });
           }
         });
+        card.querySelector(".recv")?.addEventListener("click", async () => {
+          await updateDoc(doc(db, "orders", order.id), { status: "received" });
+          if (order.customerToken) {
+            await fetch(`${API_BASE_URL}/api/notify/customer`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
+              body: JSON.stringify({ token: order.customerToken, title: "تم الاستلام 🎉", body: "شكراً لطلبك من مطعم آسيا!" })
+            });
+          }
+        });
+
         card.querySelector(".del-o").addEventListener("click", () =>
           deleteDoc(doc(db, "orders", order.id)));
 
@@ -737,6 +749,7 @@
     .ob:hover { opacity: .75; }
     .ob.prep  { background: rgba(99,179,237,0.15); color: var(--blue); }
     .ob.done  { background: rgba(72,187,120,0.15); color: var(--green); }
+    .ob.recv { background: rgba(159,122,234,0.15); color: #9f7aea; }
     .ob.del-o { background: rgba(252,129,129,0.15); color: var(--red); }
 
     .empty-msg { color: var(--muted); text-align: center; padding: 40px; }

@@ -44,7 +44,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, collection, getDocs, addDoc, serverTimestamp }
+    import { getFirestore, collection, getDocs, addDoc, serverTimestamp, doc, onSnapshot }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
     import { getMessaging, getToken, onMessage }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
@@ -308,27 +308,43 @@
     }
 
     // =====================================================
-    // 🛒 CART
+    // 🛒 CART - بتتحفظ في localStorage
     // =====================================================
+    function saveCart() { localStorage.setItem("asiaCart", JSON.stringify(cart)); }
+    function loadCart() {
+      try { cart = JSON.parse(localStorage.getItem("asiaCart")) || []; }
+      catch { cart = []; }
+    }
+
     function addToCart(item) {
       const ex = cart.find(i => i.id === item.id);
       if (ex) ex.qty++;
       else cart.push({ ...item, qty: 1 });
+      saveCart();
       updateCartUI();
       showToast(`تمت إضافة ${item.name} ✓`);
     }
 
     function updateCartUI() {
+      const total = cart.reduce((s,i) => s + i.price * i.qty, 0);
       cartCount.textContent = cart.reduce((s,i) => s + i.qty, 0);
       cartItems.innerHTML = "";
+
+      // لو عنده طلب نشط اعرضه
+      const activeOrder = localStorage.getItem("activeOrder");
+      if (activeOrder) {
+        showActiveOrder(JSON.parse(activeOrder));
+        return;
+      }
+
       if (!cart.length) {
         cartItems.innerHTML = `<p class="empty-cart">السلة فارغة</p>`;
         cartTotal.textContent = "0 ج.م";
+        orderBtn.textContent  = "تواصل معنا لتأكيد طلبك";
         return;
       }
-      let total = 0;
+
       cart.forEach(item => {
-        total += item.price * item.qty;
         const row = document.createElement("div");
         row.className = "cart-row";
         row.innerHTML = `
@@ -341,76 +357,180 @@
           <span class="cart-price">${(item.price * item.qty).toFixed(0)} ج.م</span>`;
         cartItems.appendChild(row);
       });
+
       cartTotal.textContent = `${total.toFixed(0)} ج.م`;
+
+      // زرار بيتغير حسب حالة الدخول
+      if (currentUser) {
+        orderBtn.textContent = "📞 تواصل معنا لتأكيد طلبك";
+        orderBtn.style.background = "linear-gradient(135deg, #25d366, #128c7e)";
+      } else {
+        orderBtn.textContent = "سجل دخول لتأكيد طلبك";
+        orderBtn.style.background = "";
+      }
+
       cartItems.querySelectorAll(".qty-btn").forEach(btn => {
         btn.addEventListener("click", () => {
           const idx = cart.findIndex(i => i.id === btn.dataset.id);
           if (idx === -1) return;
           if (btn.dataset.action === "inc") cart[idx].qty++;
           else { cart[idx].qty--; if (cart[idx].qty <= 0) cart.splice(idx,1); }
+          saveCart();
           updateCartUI();
         });
       });
     }
 
-    orderBtn.addEventListener("click", async () => {
-      if (!cart.length) { showToast("السلة فارغة!", true); return; }
+    // =====================================================
+    // 📋 عرض الطلب النشط مع حالته
+    // =====================================================
+    const STATUS_MAP = {
+      "pending":   { label: "⏳ تم التأكيد", color: "#f0b429" },
+      "preparing": { label: "👨‍🍳 يتم التجهيز", color: "#63b3ed" },
+      "done":      { label: "✅ طلبك جاهز الآن!", color: "#48bb78" },
+      "received":  { label: "🎉 تم الاستلام", color: "#9f7aea" }
+    };
 
-      // تحقق من تسجيل الدخول
-      if (!currentUser) {
-        showAuthPrompt();
+    function showActiveOrder(order) {
+      cartItems.innerHTML = `
+        <div class="active-order">
+          <div class="order-status-badge" style="background:${STATUS_MAP[order.status]?.color || '#f0b429'}22;border:2px solid ${STATUS_MAP[order.status]?.color || '#f0b429'};color:${STATUS_MAP[order.status]?.color || '#f0b429'};">
+            ${STATUS_MAP[order.status]?.label || order.status}
+          </div>
+          <div class="order-details-title">تفاصيل طلبك:</div>
+          <ul class="order-details-list">
+            ${order.items.map(i => `<li>${i.name} × ${i.qty} — <b>${(i.price*i.qty).toFixed(0)} ج.م</b></li>`).join("")}
+          </ul>
+          <div class="order-total-line">الإجمالي: <b>${order.total?.toFixed(0)} ج.م</b></div>
+          ${order.status === "received" ? `<button class="clear-order-btn" id="clear-order-btn">🗑️ مسح الطلب</button>` : ""}
+        </div>`;
+
+      cartTotal.textContent = `${order.total?.toFixed(0)} ج.م`;
+      orderBtn.textContent  = "📞 تواصل مع الديليفري";
+      orderBtn.style.background = "linear-gradient(135deg, #25d366, #128c7e)";
+
+      document.getElementById("clear-order-btn")?.addEventListener("click", () => {
+        localStorage.removeItem("activeOrder");
+        cart = []; saveCart(); updateCartUI();
+        showToast("تم مسح الطلب ✅");
+      });
+
+      // مراقبة حالة الطلب لحظياً
+      listenOrderStatus(order.id);
+    }
+
+    let orderUnsubscribe = null;
+    function listenOrderStatus(orderId) {
+      if (orderUnsubscribe) orderUnsubscribe();
+      orderUnsubscribe = onSnapshot(doc(db, "orders", orderId), snap => {
+        if (!snap.exists()) {
+          localStorage.removeItem("activeOrder");
+          cart = []; saveCart(); updateCartUI();
+          return;
+        }
+        const order = { id: snap.id, ...snap.data() };
+        localStorage.setItem("activeOrder", JSON.stringify(order));
+        if (cartPanel.classList.contains("open")) showActiveOrder(order);
+      });
+    }
+
+    // =====================================================
+    // 📤 إرسال الطلب
+    // =====================================================
+    orderBtn.addEventListener("click", async () => {
+      // لو عنده طلب نشط افتح واتساب
+      const activeOrder = localStorage.getItem("activeOrder");
+      if (activeOrder) {
+        showContactSheet();
         return;
       }
 
+      if (!cart.length) { showToast("السلة فارغة!", true); return; }
+
+      // لو مش مسجل احفظ مكانه وروّحه للتسجيل
+      if (!currentUser) {
+        localStorage.setItem("returnToCart", "1");
+        window.location.href = "auth.html";
+        return;
+      }
+
+      // مسجل → بعت الطلب وعرض الاتصال
       orderBtn.disabled = true;
-      orderBtn.textContent = "جارٍ الإرسال...";
       try {
-        await addDoc(collection(db, "orders"), {
-          tableNumber,
-          items: cart.map(i => ({ itemId: i.id, name: i.name, price: i.price, qty: i.qty })),
-          total: cart.reduce((s,i) => s + i.price * i.qty, 0),
-          status: "pending",
+        const ref = await addDoc(collection(db, "orders"), {
+          userId:        currentUser.uid,
+          userName:      currentUser.displayName || "",
+          items:         cart.map(i => ({ itemId: i.id, name: i.name, price: i.price, qty: i.qty })),
+          total:         cart.reduce((s,i) => s + i.price * i.qty, 0),
+          status:        "pending",
           customerToken: localStorage.getItem("fcmToken") || "",
-          createdAt: serverTimestamp()
+          createdAt:     serverTimestamp()
         });
+
+        // حفظ الطلب النشط
+        const orderData = {
+          id: ref.id,
+          items: cart.map(i => ({ name: i.name, price: i.price, qty: i.qty })),
+          total: cart.reduce((s,i) => s + i.price * i.qty, 0),
+          status: "pending"
+        };
+        localStorage.setItem("activeOrder", JSON.stringify(orderData));
 
         // إشعار للأدمن
         try {
           await fetch(`${API_BASE_URL}/api/notify/admin`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+            method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              title: `طلب جديد 🔔 طاولة ${tableNumber}`,
-              body: `${cart.reduce((s,i) => s + i.qty, 0)} صنف - إجمالي ${cart.reduce((s,i) => s + i.price * i.qty, 0).toFixed(0)} ج.م`
+              title: `طلب جديد 🔔`,
+              body: `${currentUser.displayName} - ${cart.reduce((s,i) => s+i.qty,0)} صنف - ${cart.reduce((s,i) => s+i.price*i.qty,0).toFixed(0)} ج.م`
             })
           });
         } catch {}
 
-        cart = []; updateCartUI(); closeCart();
+        updateCartUI();
+        showContactSheet();
         showToast("✅ تم إرسال طلبك!");
       } catch { showToast("⚠️ فشل الإرسال", true); }
-      finally { orderBtn.disabled = false; orderBtn.textContent = "إرسال الطلب"; }
+      finally { orderBtn.disabled = false; }
     });
 
-    // Auth prompt
-    function showAuthPrompt() {
-      document.getElementById("auth-prompt").style.display = "flex";
+    // =====================================================
+    // 📞 شاشة التواصل
+    // =====================================================
+    function showContactSheet() {
+      document.getElementById("contact-sheet").style.display = "flex";
     }
-    document.getElementById("auth-prompt-close").addEventListener("click", () => {
-      document.getElementById("auth-prompt").style.display = "none";
+    document.getElementById("contact-close").addEventListener("click", () => {
+      document.getElementById("contact-sheet").style.display = "none";
     });
-    document.getElementById("go-login").addEventListener("click", () => {
-      window.location.href = "auth.html";
+    document.getElementById("wa-btn-1").addEventListener("click", () => {
+      window.open("https://wa.me/201111306898", "_blank");
     });
-    document.getElementById("go-register").addEventListener("click", () => {
-      window.location.href = "auth.html#register";
+    document.getElementById("wa-btn-2").addEventListener("click", () => {
+      window.open("https://wa.me/201273076533", "_blank");
     });
+    document.getElementById("call-btn-1").addEventListener("click", () => {
+      window.open("tel:01111306898");
+    });
+    document.getElementById("call-btn-2").addEventListener("click", () => {
+      window.open("tel:01273076533");
+    });
+
+    // Auth prompt - لو رجع من صفحة التسجيل افتح السلة
+    if (localStorage.getItem("returnToCart")) {
+      localStorage.removeItem("returnToCart");
+      setTimeout(() => {
+        cartPanel.classList.add("open");
+        updateCartUI();
+      }, 500);
+    }
 
     // تسجيل الخروج
     document.getElementById("logout-btn")?.addEventListener("click", async () => {
       await signOut(auth);
       document.getElementById("user-bar").style.display = "none";
       currentUser = null;
+      updateCartUI();
     });
 
     // Admin double-click
@@ -451,10 +571,20 @@
       setTimeout(() => t.className = "toast", 2800);
     }
 
+    loadCart();
     loadMenu();
     updateCartUI();
     // اشتراك في الإشعارات بعد 5 ثواني
     setTimeout(subscribePush, 5000);
+
+    // لو عنده طلب نشط ابدأ مراقبته
+    const savedOrder = localStorage.getItem("activeOrder");
+    if (savedOrder) {
+      try {
+        const order = JSON.parse(savedOrder);
+        if (order.id) listenOrderStatus(order.id);
+      } catch {}
+    }
   </script>
 
   <style>
@@ -634,6 +764,24 @@
 
     .error-msg, .empty-cat, .empty-cart { color: var(--text-muted); text-align: center; padding: 40px; font-size: 15px; }
 
+    /* ACTIVE ORDER */
+    .active-order { padding: 8px 0; }
+    .order-status-badge {
+      text-align: center; padding: 12px; border-radius: 12px;
+      font-size: 16px; font-weight: 900; margin-bottom: 16px;
+    }
+    .order-details-title { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+    .order-details-list { padding-right: 16px; margin-bottom: 10px; }
+    .order-details-list li { font-size: 14px; padding: 3px 0; color: var(--text-muted); }
+    .order-details-list li b { color: var(--text); }
+    .order-total-line { font-size: 16px; font-weight: 900; color: var(--gold); margin-bottom: 12px; }
+    .clear-order-btn {
+      width: 100%; padding: 10px; background: rgba(252,129,129,0.1);
+      border: 1px solid rgba(252,129,129,0.3); color: #fc8181;
+      border-radius: 10px; font-family: var(--font); font-size: 14px;
+      font-weight: 700; cursor: pointer; margin-top: 8px;
+    }
+
     /* TOAST */
     .toast {
       position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(20px);
@@ -675,15 +823,29 @@
 
 <main id="menu-container"></main>
 
-<!-- Auth Prompt -->
-<div id="auth-prompt" style="display:none;position:fixed;inset:0;z-index:300;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.6);">
-  <div style="background:#1a1814;border-radius:20px 20px 0 0;padding:28px 20px;width:100%;border-top:1px solid rgba(201,168,76,0.2);text-align:center;">
-    <button id="auth-prompt-close" style="position:absolute;top:16px;left:16px;background:none;border:none;color:#8c8070;font-size:22px;cursor:pointer;">✕</button>
-    <div style="font-size:36px;margin-bottom:12px;">🛒</div>
-    <h3 style="font-size:20px;font-weight:900;color:#e8c97e;margin-bottom:8px;">لإتمام الطلب</h3>
-    <p style="font-size:14px;color:#8c8070;margin-bottom:24px;">سجل دخولك أو أنشئ حساب جديد</p>
-    <button id="go-login" style="width:100%;padding:14px;background:linear-gradient(135deg,#c9a84c,#d4582a);color:#fff;border:none;border-radius:30px;font-family:'Tajawal',sans-serif;font-size:16px;font-weight:900;cursor:pointer;margin-bottom:10px;">سجل الدخول</button>
-    <button id="go-register" style="width:100%;padding:14px;background:#232017;color:#e8c97e;border:1px solid rgba(201,168,76,0.3);border-radius:30px;font-family:'Tajawal',sans-serif;font-size:16px;font-weight:700;cursor:pointer;">إنشاء حساب جديد</button>
+<!-- Contact Sheet -->
+<div id="contact-sheet" style="display:none;position:fixed;inset:0;z-index:300;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.6);">
+  <div style="background:#1a1814;border-radius:20px 20px 0 0;padding:28px 20px;width:100%;border-top:1px solid rgba(201,168,76,0.2);">
+    <button id="contact-close" style="position:absolute;top:16px;left:16px;background:none;border:none;color:#8c8070;font-size:22px;cursor:pointer;">✕</button>
+    <div style="text-align:center;margin-bottom:20px;">
+      <div style="font-size:32px;margin-bottom:8px;">📞</div>
+      <h3 style="font-size:18px;font-weight:900;color:#e8c97e;">تواصل معنا لتأكيد طلبك</h3>
+      <p style="font-size:13px;color:#8c8070;margin-top:4px;">اختر طريقة التواصل مع الديليفري</p>
+    </div>
+    <div style="display:grid;gap:10px;">
+      <button id="wa-btn-1" style="padding:13px;background:#25d366;color:#fff;border:none;border-radius:12px;font-family:'Tajawal',sans-serif;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413z"/></svg>
+        واتساب 01111306898
+      </button>
+      <button id="wa-btn-2" style="padding:13px;background:#25d366;color:#fff;border:none;border-radius:12px;font-family:'Tajawal',sans-serif;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413z"/></svg>
+        واتساب 01273076533
+      </button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <button id="call-btn-1" style="padding:12px;background:#232017;border:1px solid rgba(255,255,255,0.1);color:#f0ead8;border-radius:12px;font-family:'Tajawal',sans-serif;font-size:14px;font-weight:700;cursor:pointer;">📱 01111306898</button>
+        <button id="call-btn-2" style="padding:12px;background:#232017;border:1px solid rgba(255,255,255,0.1);color:#f0ead8;border-radius:12px;font-family:'Tajawal',sans-serif;font-size:14px;font-weight:700;cursor:pointer;">📱 01273076533</button>
+      </div>
+    </div>
   </div>
 </div>
 
