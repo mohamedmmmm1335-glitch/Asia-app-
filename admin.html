@@ -476,10 +476,10 @@
             <span class="order-status">${STATUS_LABELS[order.status] || order.status}</span>
           </div>
           <ul class="order-items">
-            ${order.items.map(i => `<li>${i.name} × ${i.qty} — <b>${(i.price*i.qty).toFixed(2)} ر.س</b></li>`).join("")}
+            ${order.items.map(i => `<li>${i.name} × ${i.qty} — <b>${(i.price*i.qty).toFixed(2)} ج.م</b></li>`).join("")}
           </ul>
           <div class="order-footer">
-            <span class="order-total">المجموع: ${order.total?.toFixed(2)} ر.س</span>
+            <span class="order-total">المجموع: ${order.total?.toFixed(2)} ج.م</span>
             <div class="order-actions">
               ${order.status !== "preparing" ? `<button class="ob prep" data-id="${order.id}">👨‍🍳 يُحضَّر</button>` : ""}
               ${order.status !== "done"      ? `<button class="ob done" data-id="${order.id}">✅ جاهز</button>` : ""}
