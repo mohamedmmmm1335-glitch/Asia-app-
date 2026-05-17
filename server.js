@@ -296,10 +296,6 @@ app.get("/", (req, res) => {
   res.json({ status: "ok", message: "Digital Menu API running 🚀" });
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
-
 // =====================================================
 // 🔔 PUSH NOTIFICATIONS - FCM
 // =====================================================
@@ -351,4 +347,8 @@ app.post("/api/notify/admin", async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
 });
