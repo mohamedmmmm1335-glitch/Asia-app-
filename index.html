@@ -46,6 +46,8 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, collection, getDocs, addDoc, serverTimestamp }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getMessaging, getToken, onMessage }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyDTi6c6PwgOc35n3q7ibIzKTbBji_U2OCw",
@@ -58,8 +60,46 @@
 
     const API_BASE_URL = "https://asia-app-production.up.railway.app";
 
-    const app = initializeApp(firebaseConfig);
-    const db  = getFirestore(app);
+    const app       = initializeApp(firebaseConfig);
+    const db        = getFirestore(app);
+    const messaging = getMessaging(app);
+
+    const FCM_VAPID_KEY = "BO5PsDDmko5pBJ0YsmR7oZ8GZWyG1LiPcd2CVjw1DKO6wWCGlLZFVqdp9nBB_2ErtoV2VzXrSxXzlTEb9QFUdfM";
+
+    // =====================================================
+    // 🔔 PUSH NOTIFICATIONS - اشتراك الزبون
+    // =====================================================
+    async function subscribePush() {
+      try {
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") return;
+
+        const token = await getToken(messaging, {
+          vapidKey: FCM_VAPID_KEY,
+          serviceWorkerRegistration: await navigator.serviceWorker.ready
+        });
+
+        if (token) {
+          // حفظ التوكن في localStorage
+          localStorage.setItem("fcmToken", token);
+          // حفظه في Firestore عشان الأدمن يبعتله إشعار
+          await addDoc(collection(db, "fcmTokens"), {
+            token,
+            type: "customer",
+            tableNumber,
+            createdAt: serverTimestamp()
+          });
+        }
+      } catch (e) {
+        console.log("Push permission denied or error:", e);
+      }
+    }
+
+    // استقبال الإشعارات لما التطبيق مفتوح
+    onMessage(messaging, payload => {
+      const { title, body } = payload.notification;
+      showToast(`🔔 ${title}: ${body}`);
+    });
 
     let cart = [];
     let menuData = {};
@@ -309,8 +349,22 @@
           items: cart.map(i => ({ itemId: i.id, name: i.name, price: i.price, qty: i.qty })),
           total: cart.reduce((s,i) => s + i.price * i.qty, 0),
           status: "pending",
+          customerToken: localStorage.getItem("fcmToken") || "",
           createdAt: serverTimestamp()
         });
+
+        // إشعار للأدمن
+        try {
+          await fetch(`${API_BASE_URL}/api/notify/admin`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: `طلب جديد 🔔 طاولة ${tableNumber}`,
+              body: `${cart.reduce((s,i) => s + i.qty, 0)} صنف - إجمالي ${cart.reduce((s,i) => s + i.price * i.qty, 0).toFixed(0)} ج.م`
+            })
+          });
+        } catch {}
+
         cart = []; updateCartUI(); closeCart();
         showToast("✅ تم إرسال طلبك!");
       } catch { showToast("⚠️ فشل الإرسال", true); }
@@ -357,6 +411,8 @@
 
     loadMenu();
     updateCartUI();
+    // اشتراك في الإشعارات تلقائياً
+    setTimeout(subscribePush, 3000);
   </script>
 
   <style>

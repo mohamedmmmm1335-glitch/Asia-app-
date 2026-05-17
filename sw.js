@@ -1,4 +1,4 @@
-const CACHE_NAME = "asia-menu-v1";
+const CACHE_NAME = "asia-menu-v2";
 const ASSETS = [
   "/Asia-app-/index.html",
   "/Asia-app-/manifest.json",
@@ -24,5 +24,38 @@ self.addEventListener("activate", e => {
 self.addEventListener("fetch", e => {
   e.respondWith(
     fetch(e.request).catch(() => caches.match(e.request))
+  );
+});
+
+// =====================================================
+// 🔔 PUSH NOTIFICATIONS
+// =====================================================
+self.addEventListener("push", e => {
+  const data = e.data?.json() || {};
+  const title = data.title || "مطعم آسيا";
+  const options = {
+    body:  data.body  || "",
+    icon:  data.icon  || "/Asia-app-/logo.png",
+    badge: data.badge || "/Asia-app-/logo.png",
+    dir:   "rtl",
+    lang:  "ar",
+    vibrate: [200, 100, 200],
+    data:  data.data  || {},
+    actions: data.actions || []
+  };
+  e.waitUntil(self.registration.showNotification(title, options));
+});
+
+// لما الزبون يضغط على الإشعار
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: "window" }).then(clientList => {
+      if (clientList.length > 0) {
+        clientList[0].focus();
+      } else {
+        clients.openWindow("/Asia-app-/index.html");
+      }
+    })
   );
 });

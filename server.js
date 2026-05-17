@@ -223,3 +223,56 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
+
+// =====================================================
+// 🔔 PUSH NOTIFICATIONS - FCM
+// =====================================================
+
+// إرسال إشعار لزبون معين
+app.post("/api/notify/customer", authMiddleware, async (req, res) => {
+  try {
+    const { token, title, body } = req.body;
+    if (!token) return res.status(400).json({ error: "token مطلوب" });
+
+    const message = {
+      notification: { title, body },
+      token,
+      android: { notification: { sound: "default", priority: "high" } },
+      apns: { payload: { aps: { sound: "default" } } },
+      webpush: {
+        notification: { icon: "https://raw.githubusercontent.com/mohamedmmmm1335-glitch/Asia-app-/main/logo.png", dir: "rtl", lang: "ar", vibrate: [200, 100, 200] }
+      }
+    };
+
+    const { getMessaging } = require("firebase-admin/messaging");
+    await getMessaging().send(message);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// إرسال إشعار للأدمن (كل التوكنات من نوع admin)
+app.post("/api/notify/admin", async (req, res) => {
+  try {
+    const snap = await db.collection("fcmTokens")
+      .where("type", "==", "admin").get();
+
+    if (snap.empty) return res.json({ success: true, sent: 0 });
+
+    const { getMessaging } = require("firebase-admin/messaging");
+    const tokens = snap.docs.map(d => d.data().token);
+
+    await getMessaging().sendEachForMulticast({
+      tokens,
+      notification: { title: req.body.title || "طلب جديد 🔔", body: req.body.body || "وصل طلب جديد!" },
+      webpush: {
+        notification: { icon: "https://raw.githubusercontent.com/mohamedmmmm1335-glitch/Asia-app-/main/logo.png", dir: "rtl" }
+      }
+    });
+
+    res.json({ success: true, sent: tokens.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
