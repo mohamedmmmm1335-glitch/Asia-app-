@@ -114,12 +114,16 @@
           body: JSON.stringify({ email, name })
         });
         const data = await res.json();
-        if (!data.success) throw new Error();
+        console.log("OTP response:", data);
+        if (!data.success) throw new Error(data.error || "فشل");
 
         // احفظ البيانات مؤقتاً
         pendingData = { name, phone, email, address, pass };
         showOtpScreen(email);
-      } catch { showToast("فشل إرسال الكود، حاول تاني ❌", true); }
+      } catch(e) { 
+        console.error("OTP error:", e);
+        showToast("فشل إرسال الكود: " + e.message, true); 
+      }
       finally { setLoading("send-otp-btn", false); }
     });
 
