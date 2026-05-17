@@ -16,7 +16,7 @@
       onAuthStateChanged, updateProfile
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import {
-      getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, serverTimestamp
+      getFirestore, doc, setDoc, collection, query, where, getDocs, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -27,7 +27,6 @@
       messagingSenderId: "1043386153538",
       appId: "1:1043386153538:web:0a0fb9660f32afbdb58bdb"
     };
-    const API_BASE_URL = "https://asia-app-production.up.railway.app";
 
     const app  = initializeApp(firebaseConfig);
     const auth = getAuth(app);
@@ -37,9 +36,6 @@
     onAuthStateChanged(auth, user => {
       if (user) window.location.href = "index.html";
     });
-
-    // State
-    let pendingData = null;
 
     // =====================================================
     // TABS
@@ -52,7 +48,6 @@
       document.getElementById("register-tab").classList.toggle("active", tab === "register");
       document.getElementById("login-form").style.display    = tab === "login" ? "block" : "none";
       document.getElementById("register-form").style.display = tab === "register" ? "block" : "none";
-      document.getElementById("otp-form").style.display      = "none";
     }
 
     if (location.hash === "#register") switchTab("register");
@@ -67,38 +62,32 @@
 
       setLoading("login-btn", true);
       try {
-        const q    = query(collection(db, "customers"), where("phone", "==", phone));
-        const snap = await getDocs(q);
-        if (snap.empty) { showToast("مفيش حساب بالرقم ده ❌ سجل أولاً", true); return; }
-
-        const email = snap.docs[0].data().email;
+        const email = `${phone}@asia-menu.app`;
         await signInWithEmailAndPassword(auth, email, pass);
         window.location.href = "index.html";
-      } catch { showToast("الباسورد غلط ❌", true); }
+      } catch { showToast("رقم الموبايل أو الباسورد غلط ❌", true); }
       finally { setLoading("login-btn", false); }
     });
 
     // =====================================================
-    // 📝 REGISTER - خطوة 1: إرسال الكود
+    // 📝 REGISTER
     // =====================================================
-    document.getElementById("send-otp-btn").addEventListener("click", async () => {
+    document.getElementById("register-btn").addEventListener("click", async () => {
       const name    = document.getElementById("reg-name").value.trim();
       const phone   = document.getElementById("reg-phone").value.trim();
-      const email   = document.getElementById("reg-email").value.trim().toLowerCase();
       const address = document.getElementById("reg-address").value.trim();
       const pass    = document.getElementById("reg-pass").value;
       const confirm = document.getElementById("reg-confirm").value;
 
-      if (!name || !phone || !email || !pass) { showToast("ادخل كل البيانات المطلوبة *", true); return; }
+      if (!name || !phone || !pass) { showToast("ادخل كل البيانات المطلوبة *", true); return; }
       if (!/^01[0-9]{9}$/.test(phone)) { showToast("رقم الموبايل غير صحيح ❌", true); return; }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast("الإيميل غير صحيح ❌", true); return; }
       if (pass.length < 6) { showToast("الباسورد لازم 6 أحرف على الأقل ❌", true); return; }
       if (pass !== confirm) { showToast("الباسورد مش متطابق ❌", true); return; }
 
-      setLoading("send-otp-btn", true);
+      setLoading("register-btn", true);
       try {
         // تحقق إن الرقم مش موجود
-        const phoneQ = query(collection(db, "customers"), where("phone", "==", phone));
+        const phoneQ    = query(collection(db, "customers"), where("phone", "==", phone));
         const phoneSnap = await getDocs(phoneQ);
         if (!phoneSnap.empty) {
           showToast("الرقم ده عنده حساب! سجل دخول ✅", true);
@@ -107,90 +96,28 @@
           return;
         }
 
-        // بعت الكود
-        const res  = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, name })
-        });
-        const data = await res.json();
-        console.log("OTP response:", data);
-        if (!data.success) throw new Error(data.error || "فشل");
-
-        // احفظ البيانات مؤقتاً
-        pendingData = { name, phone, email, address, pass };
-        showOtpScreen(email);
-      } catch(e) { 
-        console.error("OTP error:", e);
-        showToast("فشل إرسال الكود: " + e.message, true); 
-      }
-      finally { setLoading("send-otp-btn", false); }
-    });
-
-    // =====================================================
-    // ✉️ OTP - خطوة 2: التحقق من الكود
-    // =====================================================
-    function showOtpScreen(email) {
-      document.getElementById("register-form").style.display = "none";
-      document.getElementById("otp-form").style.display      = "block";
-      document.getElementById("otp-email-text").textContent  = email;
-    }
-
-    document.getElementById("verify-otp-btn").addEventListener("click", async () => {
-      const code = document.getElementById("otp-input").value.trim();
-      if (!code || code.length !== 6) { showToast("ادخل الكود المكون من 6 أرقام ❌", true); return; }
-      if (!pendingData) { showToast("حصل خطأ، ابدأ من الأول", true); switchTab("register"); return; }
-
-      setLoading("verify-otp-btn", true);
-      try {
-        // تحقق من الكود
-        const res  = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: pendingData.email, code })
-        });
-        const data = await res.json();
-        if (!data.success) { showToast(data.error || "الكود غلط ❌", true); return; }
-
-        // إنشاء الحساب في Firebase
-        const cred = await createUserWithEmailAndPassword(auth, pendingData.email, pendingData.pass);
-        await updateProfile(cred.user, { displayName: pendingData.name });
+        // إنشاء الحساب
+        const email = `${phone}@asia-menu.app`;
+        const cred  = await createUserWithEmailAndPassword(auth, email, pass);
+        await updateProfile(cred.user, { displayName: name });
 
         // حفظ في Firestore
         await setDoc(doc(db, "customers", cred.user.uid), {
-          name:      pendingData.name,
-          phone:     pendingData.phone,
-          email:     pendingData.email,
-          address:   pendingData.address || "",
+          name, phone, address: address || "",
           createdAt: serverTimestamp()
         });
 
-        showToast("✅ تم إنشاء حسابك! جارٍ الدخول...");
-        setTimeout(() => window.location.href = "index.html", 1500);
+        showToast("✅ تم إنشاء حسابك!");
+        setTimeout(() => window.location.href = "index.html", 1000);
       } catch (e) {
         if (e.code === "auth/email-already-in-use") {
-          showToast("الإيميل ده مسجل قبل كده ❌", true);
+          showToast("الرقم ده مسجل قبل كده! سجل دخول ✅", true);
+          switchTab("login");
         } else {
-          showToast("حصل خطأ ❌ " + e.message, true);
+          showToast("حصل خطأ ❌", true);
         }
-      } finally { setLoading("verify-otp-btn", false); }
+      } finally { setLoading("register-btn", false); }
     });
-
-    // إعادة إرسال الكود
-    document.getElementById("resend-otp-btn").addEventListener("click", async () => {
-      if (!pendingData) return;
-      try {
-        await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: pendingData.email, name: pendingData.name })
-        });
-        showToast("✅ تم إرسال كود جديد");
-      } catch { showToast("حاول تاني بعد شوية", true); }
-    });
-
-    // رجوع للتسجيل
-    document.getElementById("back-to-register").addEventListener("click", () => switchTab("register"));
 
     // =====================================================
     // HELPERS
@@ -199,7 +126,7 @@
       const t = document.getElementById("toast");
       t.textContent = msg;
       t.className = "toast show" + (isError ? " error" : "");
-      setTimeout(() => t.className = "toast", 3500);
+      setTimeout(() => t.className = "toast", 3000);
     }
     function setLoading(id, loading) {
       const btn = document.getElementById(id);
@@ -227,11 +154,11 @@
       border-radius: var(--radius); border: 1px solid rgba(201,168,76,0.2); overflow: hidden;
     }
     .auth-header {
-      text-align: center; padding: 22px 20px 16px;
+      text-align: center; padding: 24px 20px 18px;
       background: linear-gradient(135deg,rgba(201,168,76,0.1),rgba(212,88,42,0.1));
       border-bottom: 1px solid rgba(201,168,76,0.15);
     }
-    .auth-logo { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
+    .auth-logo { width: 68px; height: 68px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
     .auth-title { font-size: 20px; font-weight: 900; color: var(--gold-light); }
     .auth-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
@@ -244,25 +171,19 @@
     .auth-tab.active { color: var(--gold); border-bottom-color: var(--gold); }
 
     .auth-body { padding: 20px; }
-    #register-form, #otp-form { display: none; }
+    #register-form { display: none; }
 
     label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
     label:first-child { margin-top: 0; }
     .req { color: var(--accent); }
 
     input {
-      width: 100%; padding: 11px 13px; border-radius: 10px;
+      width: 100%; padding: 12px 13px; border-radius: 10px;
       background: var(--surface2); border: 1px solid rgba(255,255,255,0.08);
-      color: var(--text); font-family: var(--font); font-size: 14px;
+      color: var(--text); font-family: var(--font); font-size: 15px;
     }
     input:focus { outline: none; border-color: var(--gold); }
     input::placeholder { color: var(--muted); font-size: 13px; }
-
-    /* OTP input */
-    #otp-input {
-      text-align: center; font-size: 28px; font-weight: 900;
-      letter-spacing: 10px; color: var(--gold-light);
-    }
 
     .main-btn {
       width: 100%; margin-top: 18px; padding: 13px;
@@ -272,20 +193,6 @@
       cursor: pointer; box-shadow: 0 4px 20px rgba(212,88,42,0.3);
     }
     .main-btn:disabled { opacity: .5; cursor: not-allowed; }
-
-    .sec-btn {
-      width: 100%; margin-top: 10px; padding: 11px;
-      background: var(--surface2); border: 1px solid rgba(255,255,255,0.1);
-      color: var(--muted); border-radius: 30px;
-      font-family: var(--font); font-size: 13px; font-weight: 700; cursor: pointer;
-    }
-
-    /* OTP Screen */
-    .otp-box { text-align: center; padding: 8px 0 16px; }
-    .otp-icon  { font-size: 48px; margin-bottom: 10px; }
-    .otp-title { font-size: 18px; font-weight: 900; color: var(--gold-light); margin-bottom: 6px; }
-    .otp-desc  { font-size: 13px; color: var(--muted); line-height: 1.6; }
-    .otp-email { font-size: 14px; font-weight: 700; color: var(--gold); margin: 6px 0 16px; }
 
     .toast {
       position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(20px);
@@ -327,31 +234,13 @@
       <input type="text" id="reg-name" placeholder="محمد أحمد"/>
       <label>رقم الموبايل <span class="req">*</span></label>
       <input type="tel" id="reg-phone" placeholder="01xxxxxxxxx"/>
-      <label>إيميل جوجل <span class="req">*</span></label>
-      <input type="email" id="reg-email" placeholder="example@gmail.com"/>
       <label>عنوان القرية / المنطقة</label>
       <input type="text" id="reg-address" placeholder="مثال: ميت غمر، الدقهلية"/>
       <label>الباسورد <span class="req">*</span></label>
       <input type="password" id="reg-pass" placeholder="6 أحرف على الأقل"/>
       <label>تأكيد الباسورد <span class="req">*</span></label>
       <input type="password" id="reg-confirm" placeholder="••••••"/>
-      <button class="main-btn" id="send-otp-btn">إرسال كود التفعيل 📧</button>
-    </div>
-
-    <!-- OTP -->
-    <div id="otp-form">
-      <div class="otp-box">
-        <div class="otp-icon">📧</div>
-        <div class="otp-title">أدخل كود التفعيل</div>
-        <div class="otp-desc">بعتنالك كود على</div>
-        <div class="otp-email" id="otp-email-text"></div>
-        <div class="otp-desc">افتح إيميلك وادخل الكود المكون من 6 أرقام</div>
-      </div>
-      <label>كود التفعيل <span class="req">*</span></label>
-      <input type="number" id="otp-input" placeholder="○ ○ ○ ○ ○ ○" maxlength="6"/>
-      <button class="main-btn" id="verify-otp-btn">✅ تفعيل وإنشاء الحساب</button>
-      <button class="sec-btn" id="resend-otp-btn">📨 إعادة إرسال الكود</button>
-      <button class="sec-btn" id="back-to-register">← رجوع</button>
+      <button class="main-btn" id="register-btn">إنشاء الحساب ✅</button>
     </div>
 
   </div>
