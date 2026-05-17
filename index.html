@@ -44,7 +44,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, collection, getDocs, addDoc, serverTimestamp, doc, onSnapshot }
+    import { getFirestore, collection, getDocs, addDoc, serverTimestamp, doc, onSnapshot, deleteDoc }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
     import { getMessaging, getToken, onMessage }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
@@ -402,6 +402,7 @@
             ${order.items.map(i => `<li>${i.name} × ${i.qty} — <b>${(i.price*i.qty).toFixed(0)} ج.م</b></li>`).join("")}
           </ul>
           <div class="order-total-line">الإجمالي: <b>${order.total?.toFixed(0)} ج.م</b></div>
+          ${order.status === "pending" ? `<button class="cancel-order-btn" id="cancel-order-btn">❌ إلغاء الطلب</button>` : ""}
           ${order.status === "received" ? `<button class="clear-order-btn" id="clear-order-btn">🗑️ مسح الطلب</button>` : ""}
         </div>`;
 
@@ -409,13 +410,24 @@
       orderBtn.textContent  = "📞 تواصل مع الديليفري";
       orderBtn.style.background = "linear-gradient(135deg, #25d366, #128c7e)";
 
+      // إلغاء الطلب - فقط لو pending
+      document.getElementById("cancel-order-btn")?.addEventListener("click", async () => {
+        if (!confirm("هل أنت متأكد من إلغاء الطلب؟")) return;
+        try {
+          await deleteDoc(doc(db, "orders", order.id));
+          localStorage.removeItem("activeOrder");
+          cart = []; saveCart(); updateCartUI();
+          showToast("✅ تم إلغاء الطلب");
+        } catch { showToast("⚠️ فشل الإلغاء، حاول تاني", true); }
+      });
+
+      // مسح بعد الاستلام
       document.getElementById("clear-order-btn")?.addEventListener("click", () => {
         localStorage.removeItem("activeOrder");
         cart = []; saveCart(); updateCartUI();
         showToast("تم مسح الطلب ✅");
       });
 
-      // مراقبة حالة الطلب لحظياً
       listenOrderStatus(order.id);
     }
 
@@ -772,6 +784,12 @@
     .order-details-list li { font-size: 14px; padding: 3px 0; color: var(--text-muted); }
     .order-details-list li b { color: var(--text); }
     .order-total-line { font-size: 16px; font-weight: 900; color: var(--gold); margin-bottom: 12px; }
+    .cancel-order-btn {
+      width: 100%; padding: 10px; background: rgba(252,129,129,0.1);
+      border: 1px solid rgba(252,129,129,0.3); color: #fc8181;
+      border-radius: 10px; font-family: var(--font); font-size: 14px;
+      font-weight: 700; cursor: pointer; margin-top: 8px;
+    }
     .clear-order-btn {
       width: 100%; padding: 10px; background: rgba(252,129,129,0.1);
       border: 1px solid rgba(252,129,129,0.3); color: #fc8181;
