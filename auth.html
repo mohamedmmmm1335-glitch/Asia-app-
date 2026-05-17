@@ -13,10 +13,10 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
       getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-      GoogleAuthProvider, signInWithPopup, updateProfile, onAuthStateChanged
+      onAuthStateChanged, updateProfile
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import {
-      getFirestore, doc, setDoc, getDoc, serverTimestamp
+      getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -27,120 +27,166 @@
       messagingSenderId: "1043386153538",
       appId: "1:1043386153538:web:0a0fb9660f32afbdb58bdb"
     };
+    const API_BASE_URL = "https://asia-app-production.up.railway.app";
 
     const app  = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db   = getFirestore(app);
 
-    // لو الزبون مسجل دخول أصلاً روح للمنيو
+    // لو مسجل دخول روح للمنيو
     onAuthStateChanged(auth, user => {
       if (user) window.location.href = "index.html";
     });
 
-    // =====================================================
-    // TAB SWITCH
-    // =====================================================
-    const loginTab    = document.getElementById("login-tab");
-    const registerTab = document.getElementById("register-tab");
-    const loginForm   = document.getElementById("login-form");
-    const registerForm= document.getElementById("register-form");
+    // State
+    let pendingData = null;
 
-    loginTab.addEventListener("click", () => {
-      loginTab.classList.add("active");
-      registerTab.classList.remove("active");
-      loginForm.style.display = "block";
-      registerForm.style.display = "none";
-    });
+    // =====================================================
+    // TABS
+    // =====================================================
+    document.getElementById("login-tab").addEventListener("click", () => switchTab("login"));
+    document.getElementById("register-tab").addEventListener("click", () => switchTab("register"));
 
-    registerTab.addEventListener("click", () => {
-      registerTab.classList.add("active");
-      loginTab.classList.remove("active");
-      registerForm.style.display = "block";
-      loginForm.style.display = "none";
-    });
+    function switchTab(tab) {
+      document.getElementById("login-tab").classList.toggle("active", tab === "login");
+      document.getElementById("register-tab").classList.toggle("active", tab === "register");
+      document.getElementById("login-form").style.display    = tab === "login" ? "block" : "none";
+      document.getElementById("register-form").style.display = tab === "register" ? "block" : "none";
+      document.getElementById("otp-form").style.display      = "none";
+    }
+
+    if (location.hash === "#register") switchTab("register");
 
     // =====================================================
     // 🔐 LOGIN
     // =====================================================
     document.getElementById("login-btn").addEventListener("click", async () => {
-      const phone    = document.getElementById("login-phone").value.trim();
-      const password = document.getElementById("login-pass").value;
-      if (!phone || !password) { showToast("ادخل رقم الموبايل والباسورد", true); return; }
+      const phone = document.getElementById("login-phone").value.trim();
+      const pass  = document.getElementById("login-pass").value;
+      if (!phone || !pass) { showToast("ادخل رقم الموبايل والباسورد", true); return; }
 
-      // نحول رقم الموبايل لإيميل وهمي
-      const email = `${phone}@asia-menu.app`;
       setLoading("login-btn", true);
       try {
-        await signInWithEmailAndPassword(auth, email, password);
+        const q    = query(collection(db, "customers"), where("phone", "==", phone));
+        const snap = await getDocs(q);
+        if (snap.empty) { showToast("مفيش حساب بالرقم ده ❌ سجل أولاً", true); return; }
+
+        const email = snap.docs[0].data().email;
+        await signInWithEmailAndPassword(auth, email, pass);
         window.location.href = "index.html";
-      } catch (e) {
-        showToast("رقم الموبايل أو الباسورد غلط ❌", true);
-      } finally { setLoading("login-btn", false); }
+      } catch { showToast("الباسورد غلط ❌", true); }
+      finally { setLoading("login-btn", false); }
     });
 
     // =====================================================
-    // 📝 REGISTER
+    // 📝 REGISTER - خطوة 1: إرسال الكود
     // =====================================================
-    document.getElementById("register-btn").addEventListener("click", async () => {
-      const name     = document.getElementById("reg-name").value.trim();
-      const phone    = document.getElementById("reg-phone").value.trim();
-      const address  = document.getElementById("reg-address").value.trim();
-      const password = document.getElementById("reg-pass").value;
-      const confirm  = document.getElementById("reg-confirm").value;
+    document.getElementById("send-otp-btn").addEventListener("click", async () => {
+      const name    = document.getElementById("reg-name").value.trim();
+      const phone   = document.getElementById("reg-phone").value.trim();
+      const email   = document.getElementById("reg-email").value.trim().toLowerCase();
+      const address = document.getElementById("reg-address").value.trim();
+      const pass    = document.getElementById("reg-pass").value;
+      const confirm = document.getElementById("reg-confirm").value;
 
-      if (!name || !phone || !password) { showToast("ادخل كل البيانات المطلوبة", true); return; }
-      if (password !== confirm) { showToast("الباسورد مش متطابق ❌", true); return; }
-      if (password.length < 6) { showToast("الباسورد لازم 6 أحرف على الأقل", true); return; }
+      if (!name || !phone || !email || !pass) { showToast("ادخل كل البيانات المطلوبة *", true); return; }
+      if (!/^01[0-9]{9}$/.test(phone)) { showToast("رقم الموبايل غير صحيح ❌", true); return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast("الإيميل غير صحيح ❌", true); return; }
+      if (pass.length < 6) { showToast("الباسورد لازم 6 أحرف على الأقل ❌", true); return; }
+      if (pass !== confirm) { showToast("الباسورد مش متطابق ❌", true); return; }
 
-      const email = `${phone}@asia-menu.app`;
-      setLoading("register-btn", true);
+      setLoading("send-otp-btn", true);
       try {
-        const cred = await createUserWithEmailAndPassword(auth, email, password);
-        await updateProfile(cred.user, { displayName: name });
+        // تحقق إن الرقم مش موجود
+        const phoneQ = query(collection(db, "customers"), where("phone", "==", phone));
+        const phoneSnap = await getDocs(phoneQ);
+        if (!phoneSnap.empty) {
+          showToast("الرقم ده عنده حساب! سجل دخول ✅", true);
+          switchTab("login");
+          document.getElementById("login-phone").value = phone;
+          return;
+        }
 
-        // حفظ بيانات الزبون في Firestore
+        // بعت الكود
+        const res  = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, name })
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error();
+
+        // احفظ البيانات مؤقتاً
+        pendingData = { name, phone, email, address, pass };
+        showOtpScreen(email);
+      } catch { showToast("فشل إرسال الكود، حاول تاني ❌", true); }
+      finally { setLoading("send-otp-btn", false); }
+    });
+
+    // =====================================================
+    // ✉️ OTP - خطوة 2: التحقق من الكود
+    // =====================================================
+    function showOtpScreen(email) {
+      document.getElementById("register-form").style.display = "none";
+      document.getElementById("otp-form").style.display      = "block";
+      document.getElementById("otp-email-text").textContent  = email;
+    }
+
+    document.getElementById("verify-otp-btn").addEventListener("click", async () => {
+      const code = document.getElementById("otp-input").value.trim();
+      if (!code || code.length !== 6) { showToast("ادخل الكود المكون من 6 أرقام ❌", true); return; }
+      if (!pendingData) { showToast("حصل خطأ، ابدأ من الأول", true); switchTab("register"); return; }
+
+      setLoading("verify-otp-btn", true);
+      try {
+        // تحقق من الكود
+        const res  = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: pendingData.email, code })
+        });
+        const data = await res.json();
+        if (!data.success) { showToast(data.error || "الكود غلط ❌", true); return; }
+
+        // إنشاء الحساب في Firebase
+        const cred = await createUserWithEmailAndPassword(auth, pendingData.email, pendingData.pass);
+        await updateProfile(cred.user, { displayName: pendingData.name });
+
+        // حفظ في Firestore
         await setDoc(doc(db, "customers", cred.user.uid), {
-          name, phone, address: address || "",
-          email, createdAt: serverTimestamp()
+          name:      pendingData.name,
+          phone:     pendingData.phone,
+          email:     pendingData.email,
+          address:   pendingData.address || "",
+          createdAt: serverTimestamp()
         });
 
-        window.location.href = "index.html";
+        showToast("✅ تم إنشاء حسابك! جارٍ الدخول...");
+        setTimeout(() => window.location.href = "index.html", 1500);
       } catch (e) {
         if (e.code === "auth/email-already-in-use") {
-          showToast("الرقم ده عنده حساب بالفعل، سجل دخول ✅", true);
-          loginTab.click();
+          showToast("الإيميل ده مسجل قبل كده ❌", true);
         } else {
-          showToast("حصل خطأ، حاول تاني ❌", true);
+          showToast("حصل خطأ ❌ " + e.message, true);
         }
-      } finally { setLoading("register-btn", false); }
+      } finally { setLoading("verify-otp-btn", false); }
     });
 
-    // =====================================================
-    // 🔵 GOOGLE LOGIN
-    // =====================================================
-    document.getElementById("google-btn").addEventListener("click", async () => {
-      const provider = new GoogleAuthProvider();
-      setLoading("google-btn", true);
+    // إعادة إرسال الكود
+    document.getElementById("resend-otp-btn").addEventListener("click", async () => {
+      if (!pendingData) return;
       try {
-        const result = await signInWithPopup(auth, provider);
-        const user   = result.user;
-
-        // لو أول مرة يسجل بجوجل
-        const userDoc = await getDoc(doc(db, "customers", user.uid));
-        if (!userDoc.exists()) {
-          await setDoc(doc(db, "customers", user.uid), {
-            name:      user.displayName || "",
-            phone:     "",
-            address:   "",
-            email:     user.email,
-            createdAt: serverTimestamp()
-          });
-        }
-        window.location.href = "index.html";
-      } catch (e) {
-        showToast("فشل تسجيل الدخول بجوجل ❌", true);
-      } finally { setLoading("google-btn", false); }
+        await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: pendingData.email, name: pendingData.name })
+        });
+        showToast("✅ تم إرسال كود جديد");
+      } catch { showToast("حاول تاني بعد شوية", true); }
     });
+
+    // رجوع للتسجيل
+    document.getElementById("back-to-register").addEventListener("click", () => switchTab("register"));
 
     // =====================================================
     // HELPERS
@@ -149,11 +195,10 @@
       const t = document.getElementById("toast");
       t.textContent = msg;
       t.className = "toast show" + (isError ? " error" : "");
-      setTimeout(() => t.className = "toast", 3000);
+      setTimeout(() => t.className = "toast", 3500);
     }
-
-    function setLoading(btnId, loading) {
-      const btn = document.getElementById(btnId);
+    function setLoading(id, loading) {
+      const btn = document.getElementById(id);
       btn.disabled = loading;
       if (loading) btn.dataset.orig = btn.textContent;
       btn.textContent = loading ? "⏳ جارٍ..." : btn.dataset.orig;
@@ -170,87 +215,78 @@
     }
     body {
       font-family: var(--font); background: var(--bg); color: var(--text);
-      min-height: 100vh; display: flex; flex-direction: column;
-      align-items: center; justify-content: center; padding: 20px;
+      min-height: 100vh; display: flex; align-items: center;
+      justify-content: center; padding: 20px;
     }
-
     .auth-box {
-      width: 100%; max-width: 400px;
-      background: var(--surface); border-radius: var(--radius);
-      border: 1px solid rgba(201,168,76,0.2); overflow: hidden;
+      width: 100%; max-width: 400px; background: var(--surface);
+      border-radius: var(--radius); border: 1px solid rgba(201,168,76,0.2); overflow: hidden;
     }
-
-    /* HEADER */
     .auth-header {
-      text-align: center; padding: 28px 20px 20px;
-      background: linear-gradient(135deg, rgba(201,168,76,0.1), rgba(212,88,42,0.1));
+      text-align: center; padding: 22px 20px 16px;
+      background: linear-gradient(135deg,rgba(201,168,76,0.1),rgba(212,88,42,0.1));
       border-bottom: 1px solid rgba(201,168,76,0.15);
     }
-    .auth-logo { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; margin-bottom: 10px; }
-    .auth-title { font-size: 22px; font-weight: 900; color: var(--gold-light); }
-    .auth-sub   { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .auth-logo { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
+    .auth-title { font-size: 20px; font-weight: 900; color: var(--gold-light); }
+    .auth-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-    /* TABS */
     .auth-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.07); }
     .auth-tab {
-      flex: 1; padding: 14px; text-align: center; font-family: var(--font);
-      font-size: 15px; font-weight: 700; color: var(--muted);
-      background: none; border: none; border-bottom: 2px solid transparent;
-      cursor: pointer; transition: all .2s;
+      flex: 1; padding: 13px; text-align: center; font-family: var(--font);
+      font-size: 14px; font-weight: 700; color: var(--muted);
+      background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer;
     }
     .auth-tab.active { color: var(--gold); border-bottom-color: var(--gold); }
 
-    /* FORMS */
-    .auth-body { padding: 24px 20px; }
+    .auth-body { padding: 20px; }
+    #register-form, #otp-form { display: none; }
 
-    #register-form { display: none; }
-
-    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; margin-top: 14px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
     label:first-child { margin-top: 0; }
+    .req { color: var(--accent); }
 
     input {
-      width: 100%; padding: 12px 14px; border-radius: 10px;
+      width: 100%; padding: 11px 13px; border-radius: 10px;
       background: var(--surface2); border: 1px solid rgba(255,255,255,0.08);
-      color: var(--text); font-family: var(--font); font-size: 15px;
-      transition: border-color .2s;
+      color: var(--text); font-family: var(--font); font-size: 14px;
     }
     input:focus { outline: none; border-color: var(--gold); }
-    input::placeholder { color: var(--muted); }
+    input::placeholder { color: var(--muted); font-size: 13px; }
+
+    /* OTP input */
+    #otp-input {
+      text-align: center; font-size: 28px; font-weight: 900;
+      letter-spacing: 10px; color: var(--gold-light);
+    }
 
     .main-btn {
-      width: 100%; margin-top: 20px; padding: 14px;
+      width: 100%; margin-top: 18px; padding: 13px;
       background: linear-gradient(135deg, var(--gold), var(--accent));
       color: #fff; border: none; border-radius: 30px;
-      font-family: var(--font); font-size: 16px; font-weight: 900;
-      cursor: pointer; transition: opacity .2s;
-      box-shadow: 0 4px 20px rgba(212,88,42,0.3);
+      font-family: var(--font); font-size: 15px; font-weight: 900;
+      cursor: pointer; box-shadow: 0 4px 20px rgba(212,88,42,0.3);
     }
     .main-btn:disabled { opacity: .5; cursor: not-allowed; }
 
-    .divider {
-      display: flex; align-items: center; gap: 10px;
-      margin: 18px 0; color: var(--muted); font-size: 13px;
-    }
-    .divider::before, .divider::after {
-      content: ""; flex: 1; height: 1px; background: rgba(255,255,255,0.08);
-    }
-
-    .google-btn {
-      width: 100%; padding: 12px; border-radius: 30px;
+    .sec-btn {
+      width: 100%; margin-top: 10px; padding: 11px;
       background: var(--surface2); border: 1px solid rgba(255,255,255,0.1);
-      color: var(--text); font-family: var(--font); font-size: 15px;
-      font-weight: 700; cursor: pointer; display: flex; align-items: center;
-      justify-content: center; gap: 10px; transition: background .2s;
+      color: var(--muted); border-radius: 30px;
+      font-family: var(--font); font-size: 13px; font-weight: 700; cursor: pointer;
     }
-    .google-btn:hover { background: rgba(255,255,255,0.05); }
-    .google-btn:disabled { opacity: .5; cursor: not-allowed; }
-    .google-icon { width: 20px; height: 20px; }
 
-    /* TOAST */
+    /* OTP Screen */
+    .otp-box { text-align: center; padding: 8px 0 16px; }
+    .otp-icon  { font-size: 48px; margin-bottom: 10px; }
+    .otp-title { font-size: 18px; font-weight: 900; color: var(--gold-light); margin-bottom: 6px; }
+    .otp-desc  { font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .otp-email { font-size: 14px; font-weight: 700; color: var(--gold); margin: 6px 0 16px; }
+
     .toast {
       position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(20px);
-      background: var(--surface); color: var(--text); padding: 12px 24px; border-radius: 30px;
-      font-size: 14px; font-weight: 700; opacity: 0; transition: all .3s; z-index: 999;
+      background: var(--surface); color: var(--text); padding: 12px 22px; border-radius: 30px;
+      font-size: 13px; font-weight: 700; opacity: 0; transition: all .3s; z-index: 999;
       border: 1px solid rgba(201,168,76,0.3); white-space: nowrap; pointer-events: none;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -258,12 +294,11 @@
   </style>
 </head>
 <body>
-
 <div class="auth-box">
   <div class="auth-header">
     <img src="https://raw.githubusercontent.com/mohamedmmmm1335-glitch/Asia-app-/main/logo.png" class="auth-logo" alt="لوجو"/>
     <div class="auth-title">مطعم آسيا</div>
-    <div class="auth-sub">سجل دخولك لإتمام الطلب</div>
+    <div class="auth-sub">سجل دخولك لإتمام طلبك</div>
   </div>
 
   <div class="auth-tabs">
@@ -273,57 +308,50 @@
 
   <div class="auth-body">
 
-    <!-- LOGIN FORM -->
+    <!-- LOGIN -->
     <div id="login-form">
-      <label>رقم الموبايل *</label>
+      <label>رقم الموبايل <span class="req">*</span></label>
       <input type="tel" id="login-phone" placeholder="01xxxxxxxxx"/>
-      <label>الباسورد *</label>
+      <label>الباسورد <span class="req">*</span></label>
       <input type="password" id="login-pass" placeholder="••••••"/>
       <button class="main-btn" id="login-btn">دخول</button>
-
-      <div class="divider">أو</div>
-
-      <button class="google-btn" id="google-btn">
-        <svg class="google-icon" viewBox="0 0 24 24">
-          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-        </svg>
-        تسجيل الدخول بجوجل
-      </button>
     </div>
 
-    <!-- REGISTER FORM -->
+    <!-- REGISTER -->
     <div id="register-form">
-      <label>الاسم الكامل *</label>
+      <label>الاسم الكامل <span class="req">*</span></label>
       <input type="text" id="reg-name" placeholder="محمد أحمد"/>
-      <label>رقم الموبايل *</label>
+      <label>رقم الموبايل <span class="req">*</span></label>
       <input type="tel" id="reg-phone" placeholder="01xxxxxxxxx"/>
-      <label>العنوان</label>
-      <input type="text" id="reg-address" placeholder="شارع، حي، مدينة"/>
-      <label>الباسورد *</label>
+      <label>إيميل جوجل <span class="req">*</span></label>
+      <input type="email" id="reg-email" placeholder="example@gmail.com"/>
+      <label>عنوان القرية / المنطقة</label>
+      <input type="text" id="reg-address" placeholder="مثال: ميت غمر، الدقهلية"/>
+      <label>الباسورد <span class="req">*</span></label>
       <input type="password" id="reg-pass" placeholder="6 أحرف على الأقل"/>
-      <label>تأكيد الباسورد *</label>
+      <label>تأكيد الباسورد <span class="req">*</span></label>
       <input type="password" id="reg-confirm" placeholder="••••••"/>
-      <button class="main-btn" id="register-btn">إنشاء الحساب</button>
+      <button class="main-btn" id="send-otp-btn">إرسال كود التفعيل 📧</button>
+    </div>
 
-      <div class="divider">أو</div>
-
-      <button class="google-btn" id="google-btn-reg" onclick="document.getElementById('google-btn').click()">
-        <svg class="google-icon" viewBox="0 0 24 24">
-          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-        </svg>
-        التسجيل بجوجل
-      </button>
+    <!-- OTP -->
+    <div id="otp-form">
+      <div class="otp-box">
+        <div class="otp-icon">📧</div>
+        <div class="otp-title">أدخل كود التفعيل</div>
+        <div class="otp-desc">بعتنالك كود على</div>
+        <div class="otp-email" id="otp-email-text"></div>
+        <div class="otp-desc">افتح إيميلك وادخل الكود المكون من 6 أرقام</div>
+      </div>
+      <label>كود التفعيل <span class="req">*</span></label>
+      <input type="number" id="otp-input" placeholder="○ ○ ○ ○ ○ ○" maxlength="6"/>
+      <button class="main-btn" id="verify-otp-btn">✅ تفعيل وإنشاء الحساب</button>
+      <button class="sec-btn" id="resend-otp-btn">📨 إعادة إرسال الكود</button>
+      <button class="sec-btn" id="back-to-register">← رجوع</button>
     </div>
 
   </div>
 </div>
-
 <div class="toast" id="toast"></div>
 </body>
 </html>

@@ -3,8 +3,23 @@ const cors         = require("cors");
 const jwt          = require("jsonwebtoken");
 const multer       = require("multer");
 const cloudinary   = require("cloudinary").v2;
+const nodemailer   = require("nodemailer");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore }        = require("firebase-admin/firestore");
+
+// =====================================================
+// 📧 EMAIL TRANSPORTER
+// =====================================================
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS
+  }
+});
+
+// حفظ الكودات مؤقتاً في الذاكرة
+const verificationCodes = new Map(); // email -> { code, expires }
 
 // =====================================================
 // 🔧 CONFIG
@@ -207,6 +222,67 @@ app.patch("/api/orders/:id", authMiddleware, async (req, res) => {
       return res.status(400).json({ error: "status غير صحيح" });
     }
     await db.collection("orders").doc(req.params.id).update({ status });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// =====================================================
+// 📧 OTP - إرسال كود التفعيل
+// =====================================================
+app.post("/api/auth/send-otp", async (req, res) => {
+  try {
+    const { email, name } = req.body;
+    if (!email) return res.status(400).json({ error: "email مطلوب" });
+
+    // كود 6 أرقام عشوائي
+    const code    = Math.floor(100000 + Math.random() * 900000).toString();
+    const expires = Date.now() + 10 * 60 * 1000; // 10 دقايق
+
+    verificationCodes.set(email, { code, expires });
+
+    await transporter.sendMail({
+      from: `"مطعم آسيا 🍽️" <${process.env.GMAIL_USER}>`,
+      to: email,
+      subject: "كود تفعيل حسابك - مطعم آسيا",
+      html: `
+        <div style="font-family:Arial,sans-serif;direction:rtl;text-align:center;padding:30px;background:#0f0e0c;color:#f0ead8;">
+          <img src="https://raw.githubusercontent.com/mohamedmmmm1335-glitch/Asia-app-/main/logo.png" width="80" style="border-radius:50%;margin-bottom:16px;"/>
+          <h2 style="color:#c9a84c;margin-bottom:8px;">مرحباً ${name || ""} 👋</h2>
+          <p style="color:#8c8070;margin-bottom:24px;">كود تفعيل حسابك في مطعم آسيا</p>
+          <div style="background:#1a1814;border:2px solid #c9a84c;border-radius:16px;padding:24px;margin:0 auto;max-width:200px;">
+            <div style="font-size:36px;font-weight:900;color:#e8c97e;letter-spacing:8px;">${code}</div>
+          </div>
+          <p style="color:#8c8070;margin-top:20px;font-size:13px;">الكود صالح لمدة 10 دقائق فقط</p>
+          <p style="color:#8c8070;font-size:12px;">لو مش أنت اللي طلبت ده، تجاهل الرسالة</p>
+        </div>
+      `
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/auth/verify-otp - التحقق من الكود
+app.post("/api/auth/verify-otp", async (req, res) => {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) return res.status(400).json({ error: "email و code مطلوبين" });
+
+    const stored = verificationCodes.get(email);
+    if (!stored) return res.status(400).json({ success: false, error: "الكود منتهي أو غير موجود" });
+    if (Date.now() > stored.expires) {
+      verificationCodes.delete(email);
+      return res.status(400).json({ success: false, error: "الكود انتهت صلاحيته" });
+    }
+    if (stored.code !== code.toString()) {
+      return res.status(400).json({ success: false, error: "الكود غلط" });
+    }
+
+    verificationCodes.delete(email);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
