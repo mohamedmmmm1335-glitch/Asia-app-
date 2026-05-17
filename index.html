@@ -48,6 +48,8 @@
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
     import { getMessaging, getToken, onMessage }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
+    import { getAuth, onAuthStateChanged, signOut }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyDTi6c6PwgOc35n3q7ibIzKTbBji_U2OCw",
@@ -63,6 +65,18 @@
     const app       = initializeApp(firebaseConfig);
     const db        = getFirestore(app);
     const messaging = getMessaging(app);
+    const auth      = getAuth(app);
+
+    let currentUser = null;
+
+    // تحقق من تسجيل الدخول
+    onAuthStateChanged(auth, user => {
+      currentUser = user;
+      if (user) {
+        document.getElementById("user-name").textContent = user.displayName || "مرحباً";
+        document.getElementById("user-bar").style.display = "flex";
+      }
+    });
 
     const FCM_VAPID_KEY = "BO5PsDDmko5pBJ0YsmR7oZ8GZWyG1LiPcd2CVjw1DKO6wWCGlLZFVqdp9nBB_2ErtoV2VzXrSxXzlTEb9QFUdfM";
 
@@ -341,6 +355,13 @@
 
     orderBtn.addEventListener("click", async () => {
       if (!cart.length) { showToast("السلة فارغة!", true); return; }
+
+      // تحقق من تسجيل الدخول
+      if (!currentUser) {
+        showAuthPrompt();
+        return;
+      }
+
       orderBtn.disabled = true;
       orderBtn.textContent = "جارٍ الإرسال...";
       try {
@@ -369,6 +390,27 @@
         showToast("✅ تم إرسال طلبك!");
       } catch { showToast("⚠️ فشل الإرسال", true); }
       finally { orderBtn.disabled = false; orderBtn.textContent = "إرسال الطلب"; }
+    });
+
+    // Auth prompt
+    function showAuthPrompt() {
+      document.getElementById("auth-prompt").style.display = "flex";
+    }
+    document.getElementById("auth-prompt-close").addEventListener("click", () => {
+      document.getElementById("auth-prompt").style.display = "none";
+    });
+    document.getElementById("go-login").addEventListener("click", () => {
+      window.location.href = "auth.html";
+    });
+    document.getElementById("go-register").addEventListener("click", () => {
+      window.location.href = "auth.html#register";
+    });
+
+    // تسجيل الخروج
+    document.getElementById("logout-btn")?.addEventListener("click", async () => {
+      await signOut(auth);
+      document.getElementById("user-bar").style.display = "none";
+      currentUser = null;
     });
 
     // Admin double-click
@@ -625,7 +667,25 @@
   <button id="cart-icon">🛒<span id="cart-count">0</span></button>
 </header>
 
+<!-- User Bar -->
+<div id="user-bar" style="display:none;align-items:center;justify-content:space-between;padding:8px 16px;background:rgba(201,168,76,0.08);border-bottom:1px solid rgba(201,168,76,0.15);">
+  <span style="font-size:13px;color:#e8c97e;">👋 أهلاً، <span id="user-name"></span></span>
+  <button id="logout-btn" style="background:none;border:1px solid rgba(255,255,255,0.1);color:#8c8070;padding:4px 12px;border-radius:20px;font-family:'Tajawal',sans-serif;font-size:12px;cursor:pointer;">خروج</button>
+</div>
+
 <main id="menu-container"></main>
+
+<!-- Auth Prompt -->
+<div id="auth-prompt" style="display:none;position:fixed;inset:0;z-index:300;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.6);">
+  <div style="background:#1a1814;border-radius:20px 20px 0 0;padding:28px 20px;width:100%;border-top:1px solid rgba(201,168,76,0.2);text-align:center;">
+    <button id="auth-prompt-close" style="position:absolute;top:16px;left:16px;background:none;border:none;color:#8c8070;font-size:22px;cursor:pointer;">✕</button>
+    <div style="font-size:36px;margin-bottom:12px;">🛒</div>
+    <h3 style="font-size:20px;font-weight:900;color:#e8c97e;margin-bottom:8px;">لإتمام الطلب</h3>
+    <p style="font-size:14px;color:#8c8070;margin-bottom:24px;">سجل دخولك أو أنشئ حساب جديد</p>
+    <button id="go-login" style="width:100%;padding:14px;background:linear-gradient(135deg,#c9a84c,#d4582a);color:#fff;border:none;border-radius:30px;font-family:'Tajawal',sans-serif;font-size:16px;font-weight:900;cursor:pointer;margin-bottom:10px;">سجل الدخول</button>
+    <button id="go-register" style="width:100%;padding:14px;background:#232017;color:#e8c97e;border:1px solid rgba(201,168,76,0.3);border-radius:30px;font-family:'Tajawal',sans-serif;font-size:16px;font-weight:700;cursor:pointer;">إنشاء حساب جديد</button>
+  </div>
+</div>
 
 <div id="cart-panel">
   <div class="cart-overlay"></div>
