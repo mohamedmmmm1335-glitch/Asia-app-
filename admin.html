@@ -198,10 +198,12 @@
               <span class="ac-name">${cat.name || "بدون اسم"}</span>
               <span class="ac-badge">ترتيب: ${cat.order || 0}</span>
             </div>
+            ${cat.discount ? `<div style="color:#48bb78;font-size:13px;margin-bottom:6px;">🏷️ خصم: ${cat.discount}${cat.discountType === "percent" ? "%" : " ج.م"}</div>` : ""}
             <div class="ac-actions">
-              <button class="ac-btn edit cat-img-btn" data-id="${cat.id}">🖼️ تغيير صورة</button>
-              <button class="ac-btn edit cat-name-btn" data-id="${cat.id}" data-name="${cat.name}">✏️ تعديل اسم</button>
-              <button class="ac-btn del cat-del-btn" data-id="${cat.id}">🗑️ حذف</button>
+              <button class="ac-btn edit cat-img-btn" data-id="${cat.id}">🖼️ صورة</button>
+              <button class="ac-btn edit cat-name-btn" data-id="${cat.id}" data-name="${cat.name}">✏️ اسم</button>
+              <button class="ac-btn toggle cat-disc-btn" data-id="${cat.id}">🏷️ خصم</button>
+              <button class="ac-btn del cat-del-btn" data-id="${cat.id}">🗑️</button>
             </div>
           </div>`;
 
@@ -212,6 +214,17 @@
           await updateDoc(doc(db, "categories", cat.id), { name: newName.trim() });
           await loadCategories();
           showToast("✅ تم تعديل الاسم");
+        });
+        card.querySelector(".cat-disc-btn").addEventListener("click", () => {
+          const val  = prompt(`خصم على قسم "${cat.name}" (رقم فقط):`, cat.discount || "");
+          if (val === null) return;
+          const type = prompt("النوع: اكتب 'amount' للمبلغ أو 'percent' للنسبة:", cat.discountType || "amount");
+          updateDoc(doc(db, "categories", cat.id), {
+            discount: parseFloat(val) || 0,
+            discountType: type || "amount"
+          });
+          showToast("✅ تم تطبيق الخصم على القسم");
+          loadCategories();
         });
         card.querySelector(".cat-del-btn").addEventListener("click", async () => {
           if (!confirm(`حذف قسم "${cat.name}"؟`)) return;
@@ -395,9 +408,10 @@
       document.getElementById("item-desc").value = item?.description || "";
       document.getElementById("item-img").value = item?.imageUrl || "";
       document.getElementById("item-avail").checked = item?.available !== false;
+      document.getElementById("item-discount").value = item?.discount || "";
+      document.getElementById("item-discount-type").value = item?.discountType || "amount";
       if (item?.categoryId) document.getElementById("item-cat").value = item.categoryId;
 
-      // عرض الصورة الحالية لو موجودة
       const preview = document.getElementById("item-img-preview");
       if (item?.imageUrl) {
         preview.src = item.imageUrl;
@@ -419,15 +433,16 @@
       e.preventDefault();
       const headers = { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` };
       const payload = {
-        name:        document.getElementById("item-name").value.trim(),
-        price:       parseFloat(document.getElementById("item-price").value),
-        description: document.getElementById("item-desc").value.trim(),
-        imageUrl:    document.getElementById("item-img").value.trim(),
-        categoryId:  document.getElementById("item-cat").value,
-        available:   document.getElementById("item-avail").checked
+        name:         document.getElementById("item-name").value.trim(),
+        price:        parseFloat(document.getElementById("item-price").value),
+        description:  document.getElementById("item-desc").value.trim(),
+        imageUrl:     document.getElementById("item-img").value.trim(),
+        categoryId:   document.getElementById("item-cat").value,
+        available:    document.getElementById("item-avail").checked,
+        discount:     parseFloat(document.getElementById("item-discount").value) || 0,
+        discountType: document.getElementById("item-discount-type").value
       };
 
-      // 🔗 يمر عبر الـ Backend على Railway
       const url    = editingId ? `${API_BASE_URL}/api/menu/${editingId}` : `${API_BASE_URL}/api/menu`;
       const method = editingId ? "PUT" : "POST";
 
@@ -458,6 +473,21 @@
       });
     }
 
+    // جيب بيانات العميل من Firestore
+    const customerCache = {};
+    async function getCustomerInfo(userId) {
+      if (!userId) return null;
+      if (customerCache[userId]) return customerCache[userId];
+      try {
+        const snap = await getDoc(doc(db, "customers", userId));
+        if (snap.exists()) {
+          customerCache[userId] = snap.data();
+          return snap.data();
+        }
+      } catch {}
+      return null;
+    }
+
     function renderOrders(orders) {
       const list = document.getElementById("orders-list");
       list.innerHTML = "";
@@ -465,60 +495,89 @@
         list.innerHTML = `<p class="empty-msg">لا توجد طلبات بعد</p>`;
         return;
       }
-      orders.forEach(order => {
+      orders.forEach(async order => {
         const card = document.createElement("div");
         card.className = `order-card status-${order.status}`;
         const time = order.createdAt?.toDate?.().toLocaleTimeString("ar-SA") || "—";
+
+        // جيب بيانات العميل
+        const customer = await getCustomerInfo(order.userId);
+        const customerName  = customer?.name  || order.userName || "زبون";
+        const customerPhone = customer?.phone || "—";
+
+        // حساب الخصم
+        const discount    = order.discount || 0;
+        const discountType = order.discountType || "amount";
+        const discountAmt  = discountType === "percent"
+          ? (order.total * discount / 100)
+          : discount;
+        const finalTotal = Math.max(0, (order.total || 0) - discountAmt);
+
         card.innerHTML = `
           <div class="order-header">
-            <span class="order-table">🪑 طاولة ${order.tableNumber}</span>
+            <span class="order-table">👤 ${customerName}</span>
             <span class="order-time">${time}</span>
             <span class="order-status">${STATUS_LABELS[order.status] || order.status}</span>
           </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">📱 ${customerPhone}</div>
           <ul class="order-items">
-            ${order.items.map(i => `<li>${i.name} × ${i.qty} — <b>${(i.price*i.qty).toFixed(2)} ج.م</b></li>`).join("")}
+            ${order.items.map(i => `<li>${i.name} × ${i.qty} — <b>${(i.price*i.qty).toFixed(0)} ج.م</b></li>`).join("")}
           </ul>
           <div class="order-footer">
-            <span class="order-total">المجموع: ${order.total?.toFixed(2)} ج.م</span>
+            <div>
+              <div class="order-total">المجموع: ${order.total?.toFixed(0)} ج.م</div>
+              ${discountAmt > 0 ? `<div style="color:#48bb78;font-size:13px;">خصم: −${discountAmt.toFixed(0)} ج.م</div>
+              <div class="order-total">الإجمالي: ${finalTotal.toFixed(0)} ج.م</div>` : ""}
+            </div>
             <div class="order-actions">
-              ${order.status !== "preparing" ? `<button class="ob prep" data-id="${order.id}">👨‍🍳 يُحضَّر</button>` : ""}
-              ${order.status !== "done"      ? `<button class="ob done" data-id="${order.id}">✅ جاهز</button>` : ""}
-              ${order.status === "done"      ? `<button class="ob recv" data-id="${order.id}">🎉 تم الاستلام</button>` : ""}
-              <button class="ob del-o" data-id="${order.id}">🗑️</button>
+              <button class="ob wa-share" title="واتساب">📲</button>
+              ${order.status !== "preparing" ? `<button class="ob prep">👨‍🍳 يُحضَّر</button>` : ""}
+              ${order.status !== "done" && order.status !== "received" ? `<button class="ob done">✅ جاهز</button>` : ""}
+              ${order.status === "done" ? `<button class="ob recv">🎉 استلام</button>` : ""}
+              <button class="ob disc-btn" title="خصم">🏷️</button>
+              <button class="ob del-o">🗑️</button>
             </div>
           </div>`;
 
+        // واتساب - بيبعت تفاصيل الطلب
+        card.querySelector(".wa-share").addEventListener("click", () => {
+          const itemsList = order.items.map(i => `• ${i.name} × ${i.qty} = ${(i.price*i.qty).toFixed(0)} ج.م`).join("\n");
+          const msg = `🧾 *طلب جديد - مطعم آسيا*\n👤 ${customerName}\n📱 ${customerPhone}\n\n${itemsList}\n\n💰 المجموع: ${order.total?.toFixed(0)} ج.م${discountAmt > 0 ? `\n🏷️ خصم: −${discountAmt.toFixed(0)} ج.م\n✅ الإجمالي: ${finalTotal.toFixed(0)} ج.م` : ""}\n\n⏰ ${time}`;
+          window.open(`https://wa.me/201012175853?text=${encodeURIComponent(msg)}`, "_blank");
+        });
+
+        // تغيير الحالات
         card.querySelector(".prep")?.addEventListener("click", async () => {
           await updateDoc(doc(db, "orders", order.id), { status: "preparing" });
-          // إشعار للزبون
           if (order.customerToken) {
-            await fetch(`${API_BASE_URL}/api/notify/customer`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
-              body: JSON.stringify({ token: order.customerToken, title: "طلبك بيتجهز 👨‍🍳", body: `طاولة ${order.tableNumber} - طلبك في المطبخ دلوقتي!` })
+            fetch(`${API_BASE_URL}/api/notify/customer`, {
+              method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
+              body: JSON.stringify({ token: order.customerToken, title: "طلبك بيتجهز 👨‍🍳", body: "طلبك في المطبخ دلوقتي!" })
             });
           }
         });
         card.querySelector(".done")?.addEventListener("click", async () => {
           await updateDoc(doc(db, "orders", order.id), { status: "done" });
-          // إشعار للزبون
           if (order.customerToken) {
-            await fetch(`${API_BASE_URL}/api/notify/customer`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
-              body: JSON.stringify({ token: order.customerToken, title: "طلبك جاهز ✅", body: `طاولة ${order.tableNumber} - تفضل استلم طلبك!` })
+            fetch(`${API_BASE_URL}/api/notify/customer`, {
+              method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
+              body: JSON.stringify({ token: order.customerToken, title: "طلبك جاهز ✅", body: "تفضل استلم طلبك!" })
             });
           }
         });
         card.querySelector(".recv")?.addEventListener("click", async () => {
           await updateDoc(doc(db, "orders", order.id), { status: "received" });
           if (order.customerToken) {
-            await fetch(`${API_BASE_URL}/api/notify/customer`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
+            fetch(`${API_BASE_URL}/api/notify/customer`, {
+              method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
               body: JSON.stringify({ token: order.customerToken, title: "تم الاستلام 🎉", body: "شكراً لطلبك من مطعم آسيا!" })
             });
           }
+        });
+
+        // خصم على الطلب
+        card.querySelector(".disc-btn").addEventListener("click", () => {
+          openDiscountModal(order.id, order.total);
         });
 
         card.querySelector(".del-o").addEventListener("click", () =>
@@ -529,7 +588,30 @@
     }
 
     // =====================================================
-    // TAB SWITCHING
+    // 🏷️ DISCOUNT MODAL FOR ORDERS
+    // =====================================================
+    let discountOrderId = null;
+
+    function openDiscountModal(orderId, total) {
+      discountOrderId = orderId;
+      document.getElementById("disc-value").value = "";
+      document.getElementById("discount-modal").style.display = "flex";
+    }
+
+    document.getElementById("disc-modal-close").addEventListener("click", () => {
+      document.getElementById("discount-modal").style.display = "none";
+    });
+
+    document.getElementById("disc-save-btn").addEventListener("click", async () => {
+      const value = parseFloat(document.getElementById("disc-value").value) || 0;
+      const type  = document.getElementById("disc-type").value;
+      if (!discountOrderId) return;
+      await updateDoc(doc(db, "orders", discountOrderId), {
+        discount: value, discountType: type
+      });
+      document.getElementById("discount-modal").style.display = "none";
+      showToast("✅ تم تطبيق الخصم");
+    });
     // =====================================================
     document.querySelectorAll(".nav-tab").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -848,6 +930,14 @@
         <input type="checkbox" id="item-avail" checked/>
         <label for="item-avail" style="margin:0">متاح للطلب</label>
       </div>
+      <label>خصم على الصنف</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="number" id="item-discount" min="0" placeholder="0" style="flex:1"/>
+        <select id="item-discount-type" style="width:90px;padding:11px 8px;border-radius:10px;background:var(--surface2);border:1px solid rgba(255,255,255,0.08);color:var(--text);font-family:var(--font);">
+          <option value="amount">ج.م</option>
+          <option value="percent">%</option>
+        </select>
+      </div>
       <button type="submit" id="save-item-btn">💾 حفظ</button>
     </form>
   </div>
@@ -865,6 +955,25 @@
     <button id="cat-pick-btn" class="upload-pick-btn" style="width:100%;margin-bottom:12px;">📷 اختر صورة من المعرض</button>
     <div id="cat-uploading" style="display:none;text-align:center;color:#f0b429;padding:8px;">⏳ جارٍ الرفع على Cloudinary...</div>
     <button id="cat-upload-btn" style="width:100%;padding:12px;background:#f0b429;color:#000;border:none;border-radius:8px;font-family:'Tajawal',sans-serif;font-size:16px;font-weight:700;cursor:pointer;display:none;">✅ رفع الصورة</button>
+  </div>
+</div>
+
+<!-- Discount Modal -->
+<div id="discount-modal" style="position:fixed;inset:0;z-index:300;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <h3>🏷️ إضافة خصم على الطلب</h3>
+      <button id="disc-modal-close">✕</button>
+    </div>
+    <label style="display:block;font-size:13px;color:#718096;margin-bottom:8px;">قيمة الخصم</label>
+    <div style="display:flex;gap:8px;">
+      <input type="number" id="disc-value" min="0" placeholder="0" style="flex:1;padding:11px;border-radius:10px;background:#0d0d0f;border:1px solid rgba(255,255,255,0.1);color:#e2e8f0;font-family:'Tajawal',sans-serif;font-size:15px;"/>
+      <select id="disc-type" style="width:90px;padding:11px 8px;border-radius:10px;background:#0d0d0f;border:1px solid rgba(255,255,255,0.1);color:#e2e8f0;font-family:'Tajawal',sans-serif;">
+        <option value="amount">ج.م</option>
+        <option value="percent">%</option>
+      </select>
+    </div>
+    <button id="disc-save-btn" style="width:100%;margin-top:16px;padding:12px;background:#f0b429;color:#000;border:none;border-radius:8px;font-family:'Tajawal',sans-serif;font-size:15px;font-weight:700;cursor:pointer;">✅ تطبيق الخصم</button>
   </div>
 </div>
 

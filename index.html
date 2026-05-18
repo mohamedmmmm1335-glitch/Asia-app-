@@ -148,6 +148,8 @@
             name: data.name || "بدون اسم",
             imageUrl: data.imageUrl || "",
             order: data.order || 99,
+            discount: data.discount || 0,
+            discountType: data.discountType || "amount",
             items: []
           };
         });
@@ -247,9 +249,20 @@
         return;
       }
 
+      // تطبيق خصم القسم على الأصناف لو مفيش خصم على الصنف نفسه
+      const catDiscount     = cat.discount || 0;
+      const catDiscountType = cat.discountType || "amount";
+
       const grid = document.createElement("div");
       grid.className = "items-grid";
-      availItems.forEach(item => grid.appendChild(buildItemCard(item)));
+      availItems.forEach(item => {
+        const itemWithDiscount = { ...item };
+        if (!item.discount && catDiscount > 0) {
+          itemWithDiscount.discount = catDiscount;
+          itemWithDiscount.discountType = catDiscountType;
+        }
+        grid.appendChild(buildItemCard(itemWithDiscount));
+      });
       menuContainer.appendChild(grid);
       initLazyLoad();
     }
@@ -264,6 +277,14 @@
     function buildItemCard(item) {
       const card = document.createElement("div");
       card.className = "item-card";
+
+      // حساب السعر بعد الخصم
+      const discount = item.discount || 0;
+      const discountType = item.discountType || "amount";
+      const discountAmt = discountType === "percent" ? (item.price * discount / 100) : discount;
+      const finalPrice = Math.max(0, item.price - discountAmt);
+      const hasDiscount = discountAmt > 0;
+
       card.innerHTML = `
         ${item.imageUrl
           ? `<img data-src="${item.imageUrl}" alt="${item.name}" class="item-img lazy" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E"/>`
@@ -272,13 +293,17 @@
           <h3 class="item-name">${item.name}</h3>
           ${item.description ? `<p class="item-desc">${item.description}</p>` : ""}
           <div class="item-footer">
-            <span class="item-price">${item.price} ج.م</span>
+            <div>
+              ${hasDiscount ? `<span class="item-price-old">${item.price} ج.م</span>` : ""}
+              <span class="item-price">${finalPrice.toFixed(0)} ج.م</span>
+              ${hasDiscount ? `<span class="discount-badge">خصم ${discountType === "percent" ? discount+"%" : discount+" ج.م"}</span>` : ""}
+            </div>
             <button class="add-btn">+ أضف</button>
           </div>
         </div>`;
 
       card.querySelector(".add-btn").addEventListener("click", e => {
-        addToCart({ id: item.id, name: item.name, price: item.price });
+        addToCart({ id: item.id, name: item.name, price: finalPrice });
         e.target.classList.add("pop");
         setTimeout(() => e.target.classList.remove("pop"), 300);
       });
@@ -695,6 +720,12 @@
     .item-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; flex: 1; margin-top: 4px; }
     .item-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
     .item-price { font-size: 16px; font-weight: 900; color: var(--gold); }
+    .item-price-old { font-size: 13px; color: var(--text-muted); text-decoration: line-through; margin-left: 4px; }
+    .discount-badge {
+      display: inline-block; background: rgba(212,88,42,0.15); color: var(--accent);
+      border: 1px solid rgba(212,88,42,0.3); border-radius: 10px;
+      font-size: 11px; font-weight: 700; padding: 2px 6px; margin-right: 4px;
+    }
     .add-btn {
       background: linear-gradient(135deg, var(--gold), var(--accent));
       color: #fff; border: none; padding: 7px 16px; border-radius: 20px;
